@@ -53,9 +53,9 @@ PortAudioDevice(info::PaDeviceInfo, idx) = PortAudioDevice(
         info.default_high_output_latency)
 
 function devices()
-    ndevices = Pa_GetDeviceCount()
-    infos = PaDeviceInfo[Pa_GetDeviceInfo(i) for i in 0:(ndevices - 1)]
-    PortAudioDevice[PortAudioDevice(info, idx-1) for (idx, info) in enumerate(infos)]
+    PortAudioDevice[PortAudioDevice(info, idx-1) for (idx, info) in enumerate(
+        PaDeviceInfo[Pa_GetDeviceInfo(i) for i in 0:(Pa_GetDeviceCount() - 1)]
+    )]
 end
 
 # not for external use, used in error message printing
@@ -86,19 +86,24 @@ mutable struct PortAudioStream{T}
                                 latency, warn_xruns, recover_xruns) where {T}
         inchans = inchans == -1 ? indev.maxinchans : inchans
         outchans = outchans == -1 ? outdev.maxoutchans : outchans
-        inparams = (inchans == 0) ?
-            Ptr{Pa_StreamParameters}(0) :
-            Ref(Pa_StreamParameters(indev.idx, inchans, TYPE_TO_FMT[T], latency, C_NULL))
-        outparams = (outchans == 0) ?
-            Ptr{Pa_StreamParameters}(0) :
-            Ref(Pa_StreamParameters(outdev.idx, outchans, TYPE_TO_FMT[T], latency, C_NULL))
         this = new(sr, latency, C_NULL, warn_xruns, recover_xruns)
         # finalizer(close, this)
         this.sink = PortAudioSink{T}(outdev.name, this, outchans)
         this.source = PortAudioSource{T}(indev.name, this, inchans)
         this.stream = suppress_err() do
-            Pa_OpenStream(inparams, outparams, sr, 0, PA_NO_FLAG,
-                          nothing, nothing)
+            Pa_OpenStream(
+                (inchans == 0) ?
+                    Ptr{Pa_StreamParameters}(0) :
+                    Ref(Pa_StreamParameters(indev.idx, inchans, TYPE_TO_FMT[T], latency, C_NULL)), 
+                (outchans == 0) ?
+                    Ptr{Pa_StreamParameters}(0) :
+                    Ref(Pa_StreamParameters(outdev.idx, outchans, TYPE_TO_FMT[T], latency, C_NULL)), 
+                sr, 
+                0, 
+                PA_NO_FLAG, 
+                nothing, 
+                nothing
+            )
         end
 
         Pa_StartStream(this.stream)
@@ -111,9 +116,7 @@ end
 
 
 function recover_xrun(stream::PortAudioStream)
-    playback = nchannels(stream.sink) > 0
-    capture = nchannels(stream.source) > 0
-    if playback && capture
+    if nchannels(stream.sink) > 0 && nchannels(stream.source) > 0
         # the best we can do to avoid further xruns is to fill the playback buffer and
         # discard the capture buffer. Really there's a fundamental problem with our
         # read/write-based API where you don't know whether we're currently in a state
@@ -209,10 +212,14 @@ end
 # use the default input and output devices
 function PortAudioStream(inchans=2, outchans=2; kwargs...)
     inidx = Pa_GetDefaultInputDevice()
-    indevice = PortAudioDevice(Pa_GetDeviceInfo(inidx), inidx)
     outidx = Pa_GetDefaultOutputDevice()
-    outdevice = PortAudioDevice(Pa_GetDeviceInfo(outidx), outidx)
-    PortAudioStream(indevice, outdevice, inchans, outchans; kwargs...)
+    PortAudioStream(
+        PortAudioDevice(Pa_GetDeviceInfo(inidx), inidx), 
+        PortAudioDevice(Pa_GetDeviceInfo(outidx), outidx), 
+        inchans, 
+        outchans; 
+        kwargs...
+    )
 end
 
 # handle do-syntax
@@ -273,8 +280,7 @@ for (TypeName, Super) in ((:PortAudioSink, :SampleSink),
         function $TypeName{T}(name, stream, channels) where {T}
             # portaudio data comes in interleaved, so we'll end up transposing
             # it back and forth to julia column-major
-            chunkbuf = zeros(T, channels, CHUNKFRAMES)
-            new(name, stream, chunkbuf, channels)
+            new(name, stream, zeros(T, channels, CHUNKFRAMES), channels)
         end
     end
 end
@@ -310,9 +316,12 @@ function SampledSignals.unsafe_write(sink::PortAudioSink, buf::Array, frameoffse
                    view(buf, (1:n) .+ nwritten .+ frameoffset, :))
         # TODO: if the stream is closed we just want to return a
         # shorter-than-requested frame count instead of throwing an error
-        err = Pa_WriteStream(sink.stream.stream, sink.chunkbuf, n,
-                             sink.stream.warn_xruns)
-        if err ∈ (PA_OUTPUT_UNDERFLOWED, PA_INPUT_OVERFLOWED) && sink.stream.recover_xruns
+        if Pa_WriteStream(
+            sink.stream.stream, 
+            sink.chunkbuf, 
+            n, 
+            sink.stream.warn_xruns
+        ) ∈ (PA_OUTPUT_UNDERFLOWED, PA_INPUT_OVERFLOWED) && sink.stream.recover_xruns
             recover_xrun(sink.stream)
         end
         nwritten += n
@@ -327,9 +336,12 @@ function SampledSignals.unsafe_read!(source::PortAudioSource, buf::Array, frameo
         n = min(framecount-nread, CHUNKFRAMES)
         # TODO: if the stream is closed we just want to return a
         # shorter-than-requested frame count instead of throwing an error
-        err = Pa_ReadStream(source.stream.stream, source.chunkbuf, n,
-                            source.stream.warn_xruns)
-        if err ∈ (PA_OUTPUT_UNDERFLOWED, PA_INPUT_OVERFLOWED) && source.stream.recover_xruns
+        if Pa_ReadStream(
+            source.stream.stream, 
+            source.chunkbuf, 
+            n,
+            source.stream.warn_xruns
+        ) ∈ (PA_OUTPUT_UNDERFLOWED, PA_INPUT_OVERFLOWED) && source.stream.recover_xruns
             recover_xrun(source.stream)
         end
         # de-interleave the samples
@@ -372,8 +384,7 @@ function discard_input(source::PortAudioSource)
 end
 
 function suppress_err(dofunc::Function)
-    nullfile = @static Sys.iswindows() ? "nul" : "/dev/null"
-    open(nullfile, "w") do io
+    open((@static Sys.iswindows() ? "nul" : "/dev/null"), "w") do io
         redirect_stderr(dofunc, io)
     end
 end
@@ -403,8 +414,7 @@ function __init__()
                     paths.
                     """))
             end
-            confdir = searchdirs[confdir_idx]
-            ENV[envkey] = confdir        
+            ENV[envkey] = searchdirs[confdir_idx]    
         end
         
         plugin_key = "ALSA_PLUGIN_DIR"
