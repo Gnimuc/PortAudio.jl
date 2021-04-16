@@ -7,6 +7,8 @@ import Base: eltype, show
 import Base: close, isopen
 import Base: read, read!, write, flush
 
+using Base.Threads: @spawn
+
 import LinearAlgebra
 import LinearAlgebra: transpose!
 
