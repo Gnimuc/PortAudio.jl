@@ -30,10 +30,9 @@ const type_to_fmt = Dict{Type, PaSampleFormat}(
 )
 
 const PaStreamCallbackResult = Cint
+
 # Callback return values
-const paContinue = PaStreamCallbackResult(0)
-const paComplete = PaStreamCallbackResult(1)
-const paAbort = PaStreamCallbackResult(2)
+@enum CallBackResult paContinue = 0 paComplete = 1 paAbort = 2
 
 # because we're calling Pa_ReadStream and PA_WriteStream from separate threads,
 # we put a mutex around libportaudio calls
