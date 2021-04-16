@@ -88,16 +88,16 @@ mutable struct PortAudioStream{T}
         outchans = outchans == -1 ? outdev.maxoutchans : outchans
         inparams = (inchans == 0) ?
             Ptr{Pa_StreamParameters}(0) :
-            Ref(Pa_StreamParameters(indev.idx, inchans, type_to_fmt[T], latency, C_NULL))
+            Ref(Pa_StreamParameters(indev.idx, inchans, TYPE_TO_FMT[T], latency, C_NULL))
         outparams = (outchans == 0) ?
             Ptr{Pa_StreamParameters}(0) :
-            Ref(Pa_StreamParameters(outdev.idx, outchans, type_to_fmt[T], latency, C_NULL))
+            Ref(Pa_StreamParameters(outdev.idx, outchans, TYPE_TO_FMT[T], latency, C_NULL))
         this = new(sr, latency, C_NULL, warn_xruns, recover_xruns)
         # finalizer(close, this)
         this.sink = PortAudioSink{T}(outdev.name, this, outchans)
         this.source = PortAudioSource{T}(indev.name, this, inchans)
         this.stream = suppress_err() do
-            Pa_OpenStream(inparams, outparams, sr, 0, paNoFlag,
+            Pa_OpenStream(inparams, outparams, sr, 0, PA_NO_FLAG,
                           nothing, nothing)
         end
 

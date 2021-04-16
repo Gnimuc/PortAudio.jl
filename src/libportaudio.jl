@@ -13,13 +13,13 @@ const PaStream = Ptr{Cvoid}
 const PaStreamCallback = Cvoid
 const PaStreamFlags = Culong
 
-const paNoFlag = PaStreamFlags(0x00)
+const PA_NO_FLAG = PaStreamFlags(0x00)
 
 const PA_NO_ERROR = 0
 const PA_INPUT_OVERFLOWED = -10000 + 19
 const PA_OUTPUT_UNDERFLOWED = -10000 + 20
 
-const type_to_fmt = Dict{Type, PaSampleFormat}(
+const TYPE_TO_FMT = Dict{Type, PaSampleFormat}(
     Float32 => 1,
     Int32   => 2,
     # Int24   => 4,
@@ -36,28 +36,28 @@ const PaStreamCallbackResult = Cint
 
 # because we're calling Pa_ReadStream and PA_WriteStream from separate threads,
 # we put a mutex around libportaudio calls
-const pamutex = ReentrantLock()
+const PA_MUTEX = ReentrantLock()
 
 function Pa_Initialize()
-    err = lock(pamutex) do 
+    err = lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_Initialize()::PaError
     end
     handle_status(err)
 end
 
 function Pa_Terminate()
-    err = lock(pamutex) do 
+    err = lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_Terminate()::PaError
     end
     handle_status(err)
 end
 
-Pa_GetVersion() = lock(pamutex) do 
+Pa_GetVersion() = lock(PA_MUTEX) do 
     @ccall libportaudio.Pa_GetVersion()::Cint
 end
 
 function Pa_GetVersionText()
-    versionPtr = lock(pamutex) do 
+    versionPtr = lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_GetVersionText()::Ptr{Cchar}
     end
     unsafe_string(versionPtr)
@@ -98,7 +98,7 @@ mutable struct PaHostApiInfo
     defaultOutputDevice::PaDeviceIndex
 end
 
-Pa_GetHostApiInfo(i) = unsafe_load(lock(pamutex) do 
+Pa_GetHostApiInfo(i) = unsafe_load(lock(PA_MUTEX) do 
     @ccall libportaudio.Pa_GetHostApiInfo(i::PaHostApiIndex)::Ptr{PaHostApiInfo}
 end)
 
@@ -117,19 +117,19 @@ mutable struct PaDeviceInfo
     default_sample_rate::Cdouble
 end
 
-Pa_GetDeviceCount() = lock(pamutex) do 
+Pa_GetDeviceCount() = lock(PA_MUTEX) do 
     @ccall libportaudio.Pa_GetDeviceCount()::PaDeviceIndex
 end
 
-Pa_GetDeviceInfo(i) = unsafe_load(lock(pamutex) do 
+Pa_GetDeviceInfo(i) = unsafe_load(lock(PA_MUTEX) do 
     @ccall libportaudio.Pa_GetDeviceInfo(i::PaDeviceIndex)::Ptr{PaDeviceInfo}
 end)
 
-Pa_GetDefaultInputDevice() = lock(pamutex) do 
+Pa_GetDefaultInputDevice() = lock(PA_MUTEX) do 
     @ccall libportaudio.Pa_GetDefaultInputDevice()::PaDeviceIndex
 end
 
-Pa_GetDefaultOutputDevice() = lock(pamutex) do 
+Pa_GetDefaultOutputDevice() = lock(PA_MUTEX) do 
     @ccall libportaudio.Pa_GetDefaultOutputDevice()::PaDeviceIndex
 end
 
@@ -174,7 +174,7 @@ function Pa_OpenStream(inParams, outParams,
                        flags::PaStreamFlags,
                        callback, userdata)
     streamPtr = Ref{PaStream}(0)
-    err = lock(pamutex) do 
+    err = lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_OpenStream(
             streamPtr::Ref{PaStream},
             inParams::Ref{Pa_StreamParameters},
@@ -191,28 +191,28 @@ function Pa_OpenStream(inParams, outParams,
 end
 
 function Pa_StartStream(stream::PaStream)
-    err = lock(pamutex) do 
+    err = lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_StartStream(stream::PaStream)::PaError
     end
     handle_status(err)
 end
 
 function Pa_StopStream(stream::PaStream)
-    err = lock(pamutex) do 
+    err = lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_StopStream(stream::PaStream)::PaError        
     end
     handle_status(err)
 end
 
 function Pa_CloseStream(stream::PaStream)
-    err = lock(pamutex) do 
+    err = lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_CloseStream(stream::PaStream)::PaError
     end
     handle_status(err)
 end
 
 function Pa_GetStreamReadAvailable(stream::PaStream)
-    avail = lock(pamutex) do 
+    avail = lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_GetStreamReadAvailable(stream::PaStream)::Clong
     end
     avail >= 0 || handle_status(avail)
@@ -220,7 +220,7 @@ function Pa_GetStreamReadAvailable(stream::PaStream)
 end
 
 function Pa_GetStreamWriteAvailable(stream::PaStream)
-    avail = lock(pamutex) do 
+    avail = lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_GetStreamWriteAvailable(stream::PaStream)::Clong
     end
     avail >= 0 || handle_status(avail)
@@ -235,7 +235,7 @@ function Pa_ReadStream(stream::PaStream, buf::Array, frames::Integer,
     # ctrl-C within `pasuspend`, so for now I think either don't use `pasuspend` or
     # don't use ctrl-C.
     err = disable_sigint() do
-        fetch(@spawn lock(pamutex) do 
+        fetch(@spawn lock(PA_MUTEX) do 
             @ccall libportaudio.Pa_ReadStream(stream::PaStream, buf::Ptr{Cvoid}, frames::Culong)::PaError
         end)
     end
@@ -246,7 +246,7 @@ end
 function Pa_WriteStream(stream::PaStream, buf::Array, frames::Integer,
                         show_warnings=true)
     err = disable_sigint() do
-        fetch(@spawn lock(pamutex) do
+        fetch(@spawn lock(PA_MUTEX) do
             @ccall libportaudio.Pa_WriteStream(stream::PaStream, buf::Ptr{Cvoid}, frames::Culong)::PaError
         end)
     end
@@ -263,13 +263,13 @@ end
 function handle_status(err::PaError, show_warnings::Bool=true)
     if err == PA_OUTPUT_UNDERFLOWED || err == PA_INPUT_OVERFLOWED
         if show_warnings
-            msg = lock(pamutex) do
+            msg = lock(PA_MUTEX) do
                 @ccall libportaudio.Pa_GetErrorText(err::PaError)::Ptr{Cchar}
             end
             @warn("libportaudio: " * unsafe_string(msg))
         end
     elseif err != PA_NO_ERROR
-        msg = lock(pamutex) do 
+        msg = lock(PA_MUTEX) do 
             @ccall libportaudio.Pa_GetErrorText(err::PaError)::Ptr{Cchar}
         end
         throw(ErrorException("libportaudio: " * unsafe_string(msg)))
