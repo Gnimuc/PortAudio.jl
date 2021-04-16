@@ -20,7 +20,7 @@ include("libportaudio.jl")
 
 # data is passed to and from portaudio in chunks with this many frames, because
 # we need to interleave the samples
-const CHUNKFRAMES=128
+const CHUNK_FRAMES=128
 
 function versioninfo(io::IO=stdout)
     println(io, Pa_GetVersionText())
@@ -280,7 +280,7 @@ for (TypeName, Super) in ((:PortAudioSink, :SampleSink),
         function $TypeName{T}(name, stream, channels) where {T}
             # portaudio data comes in interleaved, so we'll end up transposing
             # it back and forth to julia column-major
-            new(name, stream, zeros(T, channels, CHUNKFRAMES), channels)
+            new(name, stream, zeros(T, channels, CHUNK_FRAMES), channels)
         end
     end
 end
@@ -310,7 +310,7 @@ end
 function SampledSignals.unsafe_write(sink::PortAudioSink, buf::Array, frameoffset, framecount)
     nwritten = 0
     while nwritten < framecount
-        n = min(framecount-nwritten, CHUNKFRAMES)
+        n = min(framecount-nwritten, CHUNK_FRAMES)
         # make a buffer of interleaved samples
         transpose!(view(sink.chunkbuf, :, 1:n),
                    view(buf, (1:n) .+ nwritten .+ frameoffset, :))
@@ -333,7 +333,7 @@ end
 function SampledSignals.unsafe_read!(source::PortAudioSource, buf::Array, frameoffset, framecount)
     nread = 0
     while nread < framecount
-        n = min(framecount-nread, CHUNKFRAMES)
+        n = min(framecount-nread, CHUNK_FRAMES)
         # TODO: if the stream is closed we just want to return a
         # shorter-than-requested frame count instead of throwing an error
         if Pa_ReadStream(
@@ -362,7 +362,7 @@ Fill the playback buffer of the given sink.
 function prefill_output(sink::PortAudioSink)
     towrite = Pa_GetStreamWriteAvailable(sink.stream.stream)
     while towrite > 0
-        n = min(towrite, CHUNKFRAMES)
+        n = min(towrite, CHUNK_FRAMES)
         fill!(sink.chunkbuf, zero(eltype(sink.chunkbuf)))
         Pa_WriteStream(sink.stream.stream, sink.chunkbuf, n, false)
         towrite -= n
@@ -377,7 +377,7 @@ Read and discard data from the capture buffer.
 function discard_input(source::PortAudioSource)
     toread = Pa_GetStreamReadAvailable(source.stream.stream)
     while toread > 0
-        n = min(toread, CHUNKFRAMES)
+        n = min(toread, CHUNK_FRAMES)
         Pa_ReadStream(source.stream.stream, source.chunkbuf, n, false)
         toread -= n
     end
