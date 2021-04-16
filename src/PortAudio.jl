@@ -27,30 +27,37 @@ function versioninfo(io::IO=stdout)
     println(io, "Version: ", Pa_GetVersion())
 end
 
+struct PortAudioDeviceIO
+    max_channels::Int
+    low_latency::Float64
+    high_latency::Float64
+end
+
 mutable struct PortAudioDevice
     name::String
     host_api::String
-    max_in_channels::Int
-    max_out_channels::Int
     default_sample_rate::Float64
     index::PaDeviceIndex
-    low_input_latency::Float64
-    low_output_latency::Float64
-    high_input_latency::Float64
-    high_output_latency::Float64
+    input::PortAudioDeviceIO
+    output::PortAudioDeviceIO
 end
 
 PortAudioDevice(info::PaDeviceInfo, index) = PortAudioDevice(
-        unsafe_string(info.name),
-        unsafe_string(Pa_GetHostApiInfo(info.host_api).name),
+    unsafe_string(info.name),
+    unsafe_string(Pa_GetHostApiInfo(info.host_api).name),
+    info.default_sample_rate,
+    index,
+    PortAudioDeviceIO(
         info.max_input_channels,
-        info.max_output_channels,
-        info.default_sample_rate,
-        index,
         info.default_low_input_latency,
+        info.default_high_input_latency
+    ),
+    PortAudioDeviceIO(
+        info.max_output_channels,
         info.default_low_output_latency,
-        info.default_high_input_latency,
-        info.default_high_output_latency)
+        info.default_high_output_latency
+    )
+)
 
 function devices()
     PortAudioDevice[PortAudioDevice(info, index-1) for (index, info) in enumerate(
@@ -84,8 +91,8 @@ mutable struct PortAudioStream{Sample}
     function PortAudioStream{Sample}(in_device::PortAudioDevice, out_device::PortAudioDevice,
                                 in_channels, out_channels, the_sample_rate,
                                 latency, warn_xruns, recover_xruns) where {Sample}
-        in_channels = in_channels == -1 ? in_device.max_in_channels : in_channels
-        out_channels = out_channels == -1 ? out_device.max_out_channels : out_channels
+        in_channels = in_channels == -1 ? in_device.input.max_channels : in_channels
+        out_channels = out_channels == -1 ? out_device.output.max_channels : out_channels
         this = new(the_sample_rate, latency, C_NULL, warn_xruns, recover_xruns)
         # finalizer(close, this)
         this.sink = PortAudioSink{Sample}(out_device.name, this, out_channels)
@@ -129,7 +136,7 @@ function recover_xrun(stream::PortAudioStream)
     end
 end
 
-default_latency(devices...) = maximum(device -> max(device.high_output_latency, device.high_input_latency), devices)
+default_latency(devices...) = maximum(device -> max(device.input.high_latency, device.output.high_latency), devices)
 
 # this is the top-level outer constructor that all the other outer constructors end up calling
 """
