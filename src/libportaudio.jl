@@ -19,22 +19,14 @@ const PA_NO_ERROR = 0
 const PA_INPUT_OVERFLOWED = -10000 + 19
 const PA_OUTPUT_UNDERFLOWED = -10000 + 20
 
-# sample format types
-const paFloat32 = PaSampleFormat(0x01)
-const paInt32   = PaSampleFormat(0x02)
-const paInt24   = PaSampleFormat(0x04)
-const paInt16   = PaSampleFormat(0x08)
-const paInt8    = PaSampleFormat(0x10)
-const paUInt8   = PaSampleFormat(0x20)
-const paNonInterleaved = PaSampleFormat(0x80000000)
-
 const type_to_fmt = Dict{Type, PaSampleFormat}(
     Float32 => 1,
     Int32   => 2,
     # Int24   => 4,
     Int16   => 8,
     Int8    => 16,
-    UInt8   => 3
+    UInt8   => 32,
+    # NonInterleaved => 2^31
 )
 
 const PaStreamCallbackResult = Cint
