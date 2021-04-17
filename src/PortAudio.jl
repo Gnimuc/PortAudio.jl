@@ -164,6 +164,21 @@ end
 
 default_latency(devices...) = maximum(device -> max(device.input.high_latency, device.output.high_latency), devices)
 
+function get_default_sample_rate(input_device, input_channels, output_device, output_channels)
+    sample_rate_input = input_device.default_sample_rate
+    sample_rate_output = output_device.default_sample_rate
+    if input_channels > 0 && output_channels > 0 && sample_rate_input != sample_rate_output
+        error("""
+        Can't open duplex stream with mismatched samplerates (in: $sample_rate_input, out: $sample_rate_output).
+                Try changing your sample rate in your driver settings or open separate input and output
+                streams""")
+    elseif input_channels > 0
+        sample_rate_input
+    else
+        sample_rate_output
+    end
+end
+
 # this is the top-level outer constructor that all the other outer constructors end up calling
 """
     PortAudioStream(inchannels=2, outchannels=2; options...)
@@ -191,22 +206,13 @@ Options:
                     Only effects duplex streams.
 """
 function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudioDevice,
-        input_channels=2, output_channels=2; eltype=Float32, the_sample_rate=-1,
-        latency=default_latency(input_device, output_device), warn_xruns=false, recover_xruns=true)
-    if the_sample_rate == -1
-        sample_rate_input = input_device.default_sample_rate
-        sample_rate_output = output_device.default_sample_rate
-        if input_channels > 0 && output_channels > 0 && sample_rate_input != sample_rate_output
-            error("""
-            Can't open duplex stream with mismatched samplerates (in: $sample_rate_input, out: $sample_rate_output).
-                   Try changing your sample rate in your driver settings or open separate input and output
-                   streams""")
-        elseif input_channels > 0
-            the_sample_rate = sample_rate_input
-        else
-            the_sample_rate = sample_rate_output
-        end
-    end
+        input_channels=2, output_channels=2; 
+        eltype=Float32, 
+        the_sample_rate = get_default_sample_rate(input_device, input_channels, output_device, output_channels),
+        latency=default_latency(input_device, output_device), 
+        warn_xruns=false, 
+        recover_xruns=true
+    )
     PortAudioStream{eltype}(input_device, output_device, input_channels, output_channels, the_sample_rate,
                             latency, warn_xruns, recover_xruns)
 end
