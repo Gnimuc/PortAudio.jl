@@ -111,8 +111,18 @@ end
 function PortAudioStream{Sample}(input_device::PortAudioDevice, output_device::PortAudioDevice,
     input_channels, output_channels, the_sample_rate,
     latency, warn_xruns, recover_xruns) where {Sample}
-    input_channels = input_channels == -1 ? input_device.input.max_channels : input_channels
-    output_channels = output_channels == -1 ? output_device.output.max_channels : output_channels
+    input_channels = 
+        if input_channels === max
+            input_device.input.max_channels
+        else 
+            input_channels
+        end
+    output_channels = 
+        if output_channels === max
+            output_device.output.max_channels
+        else
+            output_channels
+        end
     # finalizer(close, this)
     input_parameters = (input_channels == 0) ?
         Ptr{Pa_StreamParameters}(0) :
@@ -230,10 +240,10 @@ function PortAudioStream(input_device_name::AbstractString, output_device_name::
             output_device = device
         end
     end
-    if input_device == nothing
+    if input_device === nothing
         error("No device matching \"$input_device_name\" found.\nAvailable Devices:\n$(device_names())")
     end
-    if output_device == nothing
+    if output_device === nothing
         error("No device matching \"$output_device_name\" found.\nAvailable Devices:\n$(device_names())")
     end
 
