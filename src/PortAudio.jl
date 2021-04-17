@@ -74,7 +74,7 @@ device_names() = join(["\"$(device.name)\"" for device in devices()], "\n")
 #
 
 mutable struct PortAudioStream{Sample}
-    samplerate::Float64
+    the_sample_rate::Float64
     latency::Float64
     stream::PaStream
     warn_xruns::Bool
@@ -158,7 +158,7 @@ used.
 Options:
 
 * `eltype`:         Sample type of the audio stream (defaults to Float32)
-* `samplerate`:     Sample rate (defaults to device sample rate)
+* `the_sample_rate`:     Sample rate (defaults to device sample rate)
 * `latency`:        Requested latency. Stream could underrun when too low, consider
                     using provided device defaults
 * `warn_xruns`:     Display a warning if there is a stream overrun or underrun, which
@@ -170,9 +170,9 @@ Options:
                     Only effects duplex streams.
 """
 function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudioDevice,
-        input_channels=2, output_channels=2; eltype=Float32, samplerate=-1,
+        input_channels=2, output_channels=2; eltype=Float32, the_sample_rate=-1,
         latency=default_latency(input_device, output_device), warn_xruns=false, recover_xruns=true)
-    if samplerate == -1
+    if the_sample_rate == -1
         sample_rate_input = input_device.default_sample_rate
         sample_rate_output = output_device.default_sample_rate
         if input_channels > 0 && output_channels > 0 && sample_rate_input != sample_rate_output
@@ -181,12 +181,12 @@ function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudio
                    Try changing your sample rate in your driver settings or open separate input and output
                    streams""")
         elseif input_channels > 0
-            samplerate = sample_rate_input
+            the_sample_rate = sample_rate_input
         else
-            samplerate = sample_rate_output
+            the_sample_rate = sample_rate_output
         end
     end
-    PortAudioStream{eltype}(input_device, output_device, input_channels, output_channels, samplerate,
+    PortAudioStream{eltype}(input_device, output_device, input_channels, output_channels, the_sample_rate,
                             latency, warn_xruns, recover_xruns)
 end
 
@@ -258,7 +258,7 @@ end
 
 isopen(stream::PortAudioStream) = stream.stream != C_NULL
 
-SampledSignals.samplerate(stream::PortAudioStream) = stream.samplerate
+SampledSignals.samplerate(stream::PortAudioStream) = stream.the_sample_rate
 eltype(::PortAudioStream{Sample}) where Sample = Sample
 
 read(stream::PortAudioStream, arguments...) = read(stream.source, arguments...)
@@ -291,7 +291,7 @@ for (TypeName, Super) in ((:PortAudioSink, :SampleSink),
         name::String
         stream::PortAudioStream{Sample}
         chunk_buffer::Array{Sample, 2}
-        nchannels::Int
+        number_of_channels::Int
 
         function $TypeName{Sample}(name, stream, channels) where {Sample}
             # portaudio data comes in interleaved, so we'll end up transposing
@@ -301,7 +301,7 @@ for (TypeName, Super) in ((:PortAudioSink, :SampleSink),
     end
 end
 
-SampledSignals.nchannels(sink_or_source::Union{PortAudioSink, PortAudioSource}) = sink_or_source.nchannels
+SampledSignals.nchannels(sink_or_source::Union{PortAudioSink, PortAudioSource}) = sink_or_source.number_of_channels
 SampledSignals.samplerate(sink_or_source::Union{PortAudioSink, PortAudioSource}) = samplerate(sink_or_source.stream)
 eltype(::Union{PortAudioSink{Sample}, PortAudioSource{Sample}}) where {Sample} = Sample
 function close(sink_or_source::Union{PortAudioSink, PortAudioSource})
