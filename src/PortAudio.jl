@@ -246,8 +246,8 @@ function get_device(index::Int)
 end
 
 # handle device names given as streams
-function PortAudioStream(input_device_name::AbstractString, output_device_name::AbstractString; keyword_arguments...)
-    PortAudioStream(get_device(input_device_name), get_device(output_device_name); keyword_arguments...)
+function PortAudioStream(input_device_id, output_device_id; keyword_arguments...)
+    PortAudioStream(get_device(input_device_id), get_device(output_device_id); keyword_arguments...)
 end
 
 # if one device is given, use it for input and output, but set input_channels=0 so we
@@ -268,10 +268,10 @@ function PortAudioStream(;
     input_index = Pa_GetDefaultInputDevice()
     output_index = Pa_GetDefaultOutputDevice()
     PortAudioStream(
-        get_device(input_index), 
-        get_device(output_index), 
+        input_index, 
+        output_index;
         input_channels = input_channels, 
-        output_channels = output_channels; 
+        output_channels = output_channels,
         keyword_arguments...
     )
 end
