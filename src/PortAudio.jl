@@ -153,8 +153,8 @@ function recover_xrun(stream::PortAudioStream)
     end
 end
 
-default_latency(devices...) =
-    maximum(device -> max(device.input.high_latency, device.output.high_latency), devices)
+default_latency(input_device, output_device) =
+    max(input_device.input.high_latency, output_device.output.high_latency)
 
 function get_default_sample_rate(
     input_device,
