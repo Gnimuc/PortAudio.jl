@@ -23,9 +23,9 @@ include("libportaudio.jl")
 
 # data is passed to and from portaudio in chunks with this many frames, because
 # we need to interleave the samples
-const CHUNK_FRAMES=128
+const CHUNK_FRAMES = 128
 
-function versioninfo(io::IO=stdout)
+function versioninfo(io::IO = stdout)
     println(io, Pa_GetVersionText())
     println(io, "Version: ", Pa_GetVersion())
 end
@@ -53,19 +53,21 @@ PortAudioDevice(info::PaDeviceInfo, index) = PortAudioDevice(
     PortAudioDeviceIO(
         info.max_input_channels,
         info.default_low_input_latency,
-        info.default_high_input_latency
+        info.default_high_input_latency,
     ),
     PortAudioDeviceIO(
         info.max_output_channels,
         info.default_low_output_latency,
-        info.default_high_output_latency
-    )
+        info.default_high_output_latency,
+    ),
 )
 
 function devices()
-    PortAudioDevice[PortAudioDevice(info, index-1) for (index, info) in enumerate(
-        PaDeviceInfo[Pa_GetDeviceInfo(index) for index in 0:(Pa_GetDeviceCount() - 1)]
-    )]
+    PortAudioDevice[
+        PortAudioDevice(info, index - 1) for (index, info) in enumerate(
+            PaDeviceInfo[Pa_GetDeviceInfo(index) for index = 0:(Pa_GetDeviceCount()-1)],
+        )
+    ]
 end
 
 # not for external use, used in error message printing
@@ -74,12 +76,14 @@ device_names() = join(["\"$(device.name)\"" for device in devices()], "\n")
 struct Portal{Sample}
     device::PortAudioDevice
     number_of_channels::Int
-    chunk_buffer::Array{Sample, 2}
+    chunk_buffer::Array{Sample,2}
 end
 
-function Portal(device, number_of_channels; 
+function Portal(
+    device,
+    number_of_channels;
     Sample = Float32,
-    chunk_buffer = zeros(Sample, channels, CHUNK_FRAMES)
+    chunk_buffer = zeros(Sample, channels, CHUNK_FRAMES),
 )
     Portal{Sample}(device, number_of_channels, chunk_buffer)
 end
@@ -104,7 +108,7 @@ end
 function fill_max(channels, portal)
     if channels === max
         portal.max_channels
-    else 
+    else
         channels
     end
 end
@@ -113,7 +117,15 @@ function make_parameters(channels, device)
     if channels == 0
         Ptr{Pa_StreamParameters}(0)
     else
-        Ref(Pa_StreamParameters(device.index, channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
+        Ref(
+            Pa_StreamParameters(
+                device.index,
+                channels,
+                TYPE_TO_FORMAT[Sample],
+                latency,
+                C_NULL,
+            ),
+        )
     end
 end
 
@@ -141,16 +153,24 @@ function recover_xrun(stream::PortAudioStream)
     end
 end
 
-default_latency(devices...) = maximum(device -> max(device.input.high_latency, device.output.high_latency), devices)
+default_latency(devices...) =
+    maximum(device -> max(device.input.high_latency, device.output.high_latency), devices)
 
-function get_default_sample_rate(input_device, input_channels, output_device, output_channels)
+function get_default_sample_rate(
+    input_device,
+    input_channels,
+    output_device,
+    output_channels,
+)
     sample_rate_input = input_device.default_sample_rate
     sample_rate_output = output_device.default_sample_rate
     if input_channels > 0 && output_channels > 0 && sample_rate_input != sample_rate_output
-        error("""
-        Can't open duplex stream with mismatched samplerates (in: $sample_rate_input, out: $sample_rate_output).
-                Try changing your sample rate in your driver settings or open separate input and output
-                streams""")
+        error(
+            """
+      Can't open duplex stream with mismatched samplerates (in: $sample_rate_input, out: $sample_rate_output).
+              Try changing your sample rate in your driver settings or open separate input and output
+              streams""",
+        )
     elseif input_channels > 0
         sample_rate_input
     else
@@ -184,15 +204,22 @@ Options:
                     fewer xruns but could make each xrun more audible. True by default.
                     Only effects duplex streams.
 """
-function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudioDevice;
-        input_channels = 2, 
-        output_channels = 2, 
-        eltype = Float32, 
-        the_sample_rate = get_default_sample_rate(input_device, input_channels, output_device, output_channels),
-        latency = default_latency(input_device, output_device), 
-        warn_xruns = false, 
-        recover_xruns = true
-    )
+function PortAudioStream(
+    input_device::PortAudioDevice,
+    output_device::PortAudioDevice;
+    input_channels = 2,
+    output_channels = 2,
+    eltype = Float32,
+    the_sample_rate = get_default_sample_rate(
+        input_device,
+        input_channels,
+        output_device,
+        output_channels,
+    ),
+    latency = default_latency(input_device, output_device),
+    warn_xruns = false,
+    recover_xruns = true,
+)
     input_channels_filled = fill_max(input_channels, input_device.input)
     output_channels_filled = fill_max(output_channels, output_device.output)
     # finalizer(close, this)
@@ -200,13 +227,13 @@ function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudio
     output_parameters = make_parameters(output_channels_filled, output_device)
     stream_pointer = suppress_err() do
         Pa_OpenStream(
-            input_parameters, 
-            output_parameters, 
-            the_sample_rate, 
-            0, 
-            PA_NO_FLAG, 
-            nothing, 
-            nothing
+            input_parameters,
+            output_parameters,
+            the_sample_rate,
+            0,
+            PA_NO_FLAG,
+            nothing,
+            nothing,
         )
     end
     Pa_StartStream(stream_pointer)
@@ -218,11 +245,19 @@ function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudio
         warn_xruns,
         recover_xruns,
         Portal(output_device, output_channels; Sample = Sample),
-        Portal(input_device, input_channels; Sample = Sample)
+        Portal(input_device, input_channels; Sample = Sample),
     )
     prefill_output(stream)
-    PortAudioStream{eltype}(input_device, output_device, input_channels_filled, output_channels_filled, the_sample_rate,
-                            latency, warn_xruns, recover_xruns)
+    PortAudioStream{eltype}(
+        input_device,
+        output_device,
+        input_channels_filled,
+        output_channels_filled,
+        the_sample_rate,
+        latency,
+        warn_xruns,
+        recover_xruns,
+    )
 end
 
 function get_device(device::PortAudioDevice)
@@ -236,7 +271,9 @@ function get_device(device_name::String)
         end
     end
     if device === nothing
-        error("No device matching \"$device_name\" found.\nAvailable Devices:\n$(device_names())")
+        error(
+            "No device matching \"$device_name\" found.\nAvailable Devices:\n$(device_names())",
+        )
     end
 end
 
@@ -246,25 +283,25 @@ end
 
 # handle device names given as streams
 function PortAudioStream(input_device_id, output_device_id; keyword_arguments...)
-    PortAudioStream(get_device(input_device_id), get_device(output_device_id); keyword_arguments...)
+    PortAudioStream(
+        get_device(input_device_id),
+        get_device(output_device_id);
+        keyword_arguments...,
+    )
 end
 
 # if one device is given, use it for input and output, but set input_channels=0 so we
 # end up with an output-only stream
-function PortAudioStream(device;
-    keyword_arguments...
-)
+function PortAudioStream(device; keyword_arguments...)
     PortAudioStream(device, device; input_channels = 0, keyword_arguments...)
 end
 
 # use the default input and output devices
-function PortAudioStream(;
-    keyword_arguments...
-)
+function PortAudioStream(; keyword_arguments...)
     PortAudioStream(
-        Pa_GetDefaultInputDevice(), 
+        Pa_GetDefaultInputDevice(),
         Pa_GetDefaultOutputDevice();
-        keyword_arguments...
+        keyword_arguments...,
     )
 end
 
@@ -292,12 +329,12 @@ end
 isopen(stream::PortAudioStream) = stream.stream_pointer != C_NULL
 
 samplerate(stream::PortAudioStream) = stream.the_sample_rate
-eltype(::PortAudioStream{Sample}) where Sample = Sample
+eltype(::PortAudioStream{Sample}) where {Sample} = Sample
 
 read(stream::PortAudioStream, arguments...) = read(PortAudioSource(stream), arguments...)
 read!(stream::PortAudioStream, arguments...) = read!(PortAudioSource(stream), arguments...)
 write(stream::PortAudioStream, arguments...) = write(PortAudioSink(stream), arguments...)
-write(sink_stream::PortAudioStream, source_stream::PortAudioStream, arguments...) = 
+write(sink_stream::PortAudioStream, source_stream::PortAudioStream, arguments...) =
     write(PortAudioSink(sink_stream), PortAudioSource(source_stream), arguments...)
 flush(stream::PortAudioStream) = flush(PortAudioSink(stream))
 
@@ -325,34 +362,44 @@ struct PortAudioSink{Sample} <: SampleSink
     stream::PortAudioStream{Sample}
 end
 
-struct PortAudioSource <: SampleSource
+struct PortAudioSource{Sample} <: SampleSource
     stream::PortAudioStream{Sample}
 end
 
 nchannels(sink::PortAudioSink) = nchannels(sink.stream.sink_portal)
 nchannels(source::PortAudioSource) = nchannels(source.stream.source_portal)
-samplerate(sink_or_source::Union{PortAudioSink, PortAudioSource}) = samplerate(sink_or_source.stream)
-eltype(::Union{PortAudioSink{Sample}, PortAudioSource{Sample}}) where {Sample} = Sample
-function close(sink_or_source::Union{PortAudioSink, PortAudioSource})
+samplerate(sink_or_source::Union{PortAudioSink,PortAudioSource}) =
+    samplerate(sink_or_source.stream)
+eltype(::Union{PortAudioSink{Sample},PortAudioSource{Sample}}) where {Sample} = Sample
+function close(sink_or_source::Union{PortAudioSink,PortAudioSource})
     close(sink_or_source.stream)
 end
-isopen(sink_or_source::Union{PortAudioSink, PortAudioSource}) = isopen(sink_or_source.stream)
+isopen(sink_or_source::Union{PortAudioSink,PortAudioSource}) = isopen(sink_or_source.stream)
 name(sink::PortAudioSink) = name(sink.stream.sink_portal)
 name(source::PortAudioSource) = name(source.stream.source_portal)
 
-function show(io::IO, ::Type{PortAudioSink{Sample}}) where Sample
+function show(io::IO, ::Type{PortAudioSink{Sample}}) where {Sample}
     print(io, "PortAudioSink{$Sample}")
 end
 
-function show(io::IO, ::Type{PortAudioSource{Sample}}) where Sample
+function show(io::IO, ::Type{PortAudioSource{Sample}}) where {Sample}
     print(io, "PortAudioSource{$Sample}")
 end
 
-function show(io::IO, sink_or_source::SinkOrSource) where {SinkOrSource <: Union{PortAudioSink, PortAudioSource}}
-    print(io, nchannels(sink_or_source), "-channel ", SinkOrSource, "(\"", name(sink_or_source), "\")")
+function show(
+    io::IO,
+    sink_or_source::SinkOrSource,
+) where {SinkOrSource<:Union{PortAudioSink,PortAudioSource}}
+    print(
+        io,
+        nchannels(sink_or_source),
+        "-channel ",
+        SinkOrSource,
+        "(\"",
+        name(sink_or_source),
+        "\")",
+    )
 end
-
-function loop_copy()
 
 function unsafe_write(sink::PortAudioSink, buf::Array, frameoffset, framecount)
     stream = sink.stream
@@ -362,18 +409,16 @@ function unsafe_write(sink::PortAudioSink, buf::Array, frameoffset, framecount)
     recover_xruns = stream.recover_xruns
     number_written = 0
     while number_written < framecount
-        number = min(framecount-number_written, CHUNK_FRAMES)
+        number = min(framecount - number_written, CHUNK_FRAMES)
         # make a buffer of interleaved samples
-        transpose!(view(chunk_buffer, :, 1:number),
-                   view(buf, (1:number) .+ number_written .+ frameoffset, :))
+        transpose!(
+            view(chunk_buffer, :, 1:number),
+            view(buf, (1:number) .+ number_written .+ frameoffset, :),
+        )
         # TODO: if the stream is closed we just want to return a
         # shorter-than-requested frame count instead of throwing an error
-        if Pa_WriteStream(
-            stream_pointer, 
-            chunk_buffer, 
-            number, 
-            warn_xruns
-        ) ∈ (PA_OUTPUT_UNDERFLOWED, PA_INPUT_OVERFLOWED) && recover_xruns
+        if Pa_WriteStream(stream_pointer, chunk_buffer, number, warn_xruns) ∈
+           (PA_OUTPUT_UNDERFLOWED, PA_INPUT_OVERFLOWED) && recover_xruns
             recover_xrun(stream)
         end
         number_written += number
@@ -390,20 +435,18 @@ function unsafe_read!(source::PortAudioSource, buf::Array, frameoffset, framecou
     recover_xruns = stream.recover_xruns
     number_read = 0
     while number_read < framecount
-        number = min(framecount-number_read, CHUNK_FRAMES)
+        number = min(framecount - number_read, CHUNK_FRAMES)
         # TODO: if the stream is closed we just want to return a
         # shorter-than-requested frame count instead of throwing an error
-        if Pa_ReadStream(
-            stream_pointer, 
-            chunk_buffer, 
-            number,
-            warn_xruns
-        ) ∈ (PA_OUTPUT_UNDERFLOWED, PA_INPUT_OVERFLOWED) && recover_xruns
+        if Pa_ReadStream(stream_pointer, chunk_buffer, number, warn_xruns) ∈
+           (PA_OUTPUT_UNDERFLOWED, PA_INPUT_OVERFLOWED) && recover_xruns
             recover_xrun(stream)
         end
         # de-interleave the samples
-        transpose!(view(buf, (1:number) .+ number_read .+ frameoffset, :),
-                   view(chunk_buffer, :, 1:number))
+        transpose!(
+            view(buf, (1:number) .+ number_read .+ frameoffset, :),
+            view(chunk_buffer, :, 1:number),
+        )
 
         number_read += number
     end
@@ -456,30 +499,31 @@ function __init__()
     if islinux()
         config_key = "ALSA_CONFIG_DIR"
         if config_key ∉ keys(ENV)
-            search_folders = ["/usr/share/alsa",
-                          "/usr/local/share/alsa",
-                          "/etc/alsa"]
+            search_folders = ["/usr/share/alsa", "/usr/local/share/alsa", "/etc/alsa"]
             config_folder_index = findfirst(search_folders) do folder
                 isfile(joinpath(folder, "alsa.conf"))
             end
             if config_folder_index === nothing
-                throw(ErrorException(
-                    """
-                    Could not find ALSA config directory. Searched:
-                    $(join(search_folders, "\n"))
+                throw(
+                    ErrorException(
+                        """
+                        Could not find ALSA config directory. Searched:
+                        $(join(search_folders, "\n"))
 
-                    if ALSA is installed, set the "ALSA_CONFIG_DIR" environment
-                    variable. The given directory should have a file "alsa.conf".
+                        if ALSA is installed, set the "ALSA_CONFIG_DIR" environment
+                        variable. The given directory should have a file "alsa.conf".
 
-                    If it would be useful to others, please file an issue at
-                    https://github.com/JuliaAudio/PortAudio.jl/issues
-                    with your alsa config directory so we can add it to the search
-                    paths.
-                    """))
+                        If it would be useful to others, please file an issue at
+                        https://github.com/JuliaAudio/PortAudio.jl/issues
+                        with your alsa config directory so we can add it to the search
+                        paths.
+                        """,
+                    ),
+                )
             end
-            ENV[config_key] = search_folders[config_folder_index]    
+            ENV[config_key] = search_folders[config_folder_index]
         end
-        
+
         plugin_key = "ALSA_PLUGIN_DIR"
         if plugin_key ∉ keys(ENV) && alsa_plugins_jll.is_available()
             ENV[plugin_key] = joinpath(alsa_plugins_jll.artifact_dir, "lib", "alsa-lib")
