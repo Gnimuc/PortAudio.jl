@@ -71,6 +71,22 @@ end
 # not for external use, used in error message printing
 device_names() = join(["\"$(device.name)\"" for device in devices()], "\n")
 
+struct Portal{Sample}
+    device::PortAudioDevice
+    number_of_channels::Int
+    chunk_buffer::Array{Sample, 2}
+end
+
+function Portal(device, number_of_channels; 
+    Sample = Float32,
+    chunk_buffer = zeros(Sample, channels, CHUNK_FRAMES)
+)
+    Portal{Sample}(device, number_of_channels, chunk_buffer)
+end
+
+nchannels(portal::Portal) = portal.number_of_channels
+name(portal::Portal) = portal.device.name
+
 #
 # PortAudioStream
 #
@@ -81,8 +97,8 @@ mutable struct PortAudioStream{Sample}
     stream_pointer::PaStream
     warn_xruns::Bool
     recover_xruns::Bool
-    sink # untyped because of circular type definition
-    source # untyped because of circular type definition
+    sink_portal::Portal{Sample}
+    source_portal::Portal{Sample}
 
     # this inner constructor is generally called via the top-level outer
     # constructor below
@@ -96,11 +112,7 @@ mutable struct PortAudioStream{Sample}
                                 latency, warn_xruns, recover_xruns) where {Sample}
         input_channels = input_channels == -1 ? input_device.input.max_channels : input_channels
         output_channels = output_channels == -1 ? output_device.output.max_channels : output_channels
-        this = new(the_sample_rate, latency, C_NULL, warn_xruns, recover_xruns)
         # finalizer(close, this)
-        sink = PortAudioSink{Sample}(output_device.name, this, output_channels)
-        this.sink = sink
-        this.source = PortAudioSource{Sample}(input_device.name, this, input_channels)
         input_parameters = (input_channels == 0) ?
             Ptr{Pa_StreamParameters}(0) :
             Ref(Pa_StreamParameters(input_device.index, input_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
@@ -118,19 +130,26 @@ mutable struct PortAudioStream{Sample}
                 nothing
             )
         end
-        this.stream_pointer = stream_pointer
         Pa_StartStream(stream_pointer)
         # pre-fill the output stream so we're less likely to underrun
+        stream = PortAudioStream(
+            the_sample_rate,
+            latency,
+            stream_pointer,
+            warn_xruns,
+            recover_xruns,
+            Portal(output_device, output_channels; Sample = Sample),
+            Portal(input_device, input_channels; Sample = Sample)
+        )
         prefill_output(stream)
-        this
+        stream
     end
 end
 
-
 function recover_xrun(stream::PortAudioStream)
-    sink = stream.sink
-    source = stream.source
-    if nchannels(sink) > 0 && nchannels(source) > 0
+    sink_portal = stream.sink_portal
+    source_portal = stream.source_portal
+    if nchannels(sink_portal) > 0 && nchannels(source_portal) > 0
         # the best we can do to avoid further xruns is to fill the playback buffer and
         # discard the capture buffer. Really there's a fundamental problem with our
         # read/write-based API where you don't know whether we're currently in a state
@@ -263,22 +282,25 @@ isopen(stream::PortAudioStream) = stream.stream_pointer != C_NULL
 samplerate(stream::PortAudioStream) = stream.the_sample_rate
 eltype(::PortAudioStream{Sample}) where Sample = Sample
 
-read(stream::PortAudioStream, arguments...) = read(stream.source, arguments...)
-read!(stream::PortAudioStream, arguments...) = read!(stream.source, arguments...)
-write(stream::PortAudioStream, arguments...) = write(stream.sink, arguments...)
-write(sink::PortAudioStream, source::PortAudioStream, arguments...) = write(sink.sink, source.source, arguments...)
-flush(stream::PortAudioStream) = flush(stream.sink)
+read(stream::PortAudioStream, arguments...) = read(PortAudioSource(stream), arguments...)
+read!(stream::PortAudioStream, arguments...) = read!(PortAudioSource(stream), arguments...)
+write(stream::PortAudioStream, arguments...) = write(PortAudioSink(stream), arguments...)
+write(sink_stream::PortAudioStream, source_stream::PortAudioStream, arguments...) = 
+    write(PortAudioSink(sink_stream), PortAudioSource(source_stream), arguments...)
+flush(stream::PortAudioStream) = flush(PortAudioSink(stream))
 
 function show(io::IO, stream::PortAudioStream)
     println(io, typeof(stream))
     println(io, "  Samplerate: ", samplerate(stream), "Hz")
-    sink = stream.sink
-    source = stream.source
-    if nchannels(stream.sink) > 0
-        print(io, "\n  ", nchannels(sink), " channel sink: \"", name(sink), "\"")
+    sink_portal = stream.sink_portal
+    sink_channels = nchannels(sink_portal)
+    if sink_channels > 0
+        print(io, "\n  ", sink_channels, " channel sink: \"", name(sink_portal), "\"")
     end
-    if nchannels(stream.source) > 0
-        print(io, "\n  ", nchannels(source), " channel source: \"", name(source), "\"")
+    source_portal = stream.source_portal
+    source_channels = nchannels(source_portal)
+    if source_channels > 0
+        print(io, "\n  ", source_channels, " channel source: \"", name(source_portal), "\"")
     end
 end
 
@@ -287,31 +309,24 @@ end
 #
 
 # Define our source and sink types
-for (TypeName, Super) in ((:PortAudioSink, :SampleSink),
-                          (:PortAudioSource, :SampleSource))
-    @eval mutable struct $TypeName{Sample} <: $Super
-        name::String
-        stream::PortAudioStream{Sample}
-        chunk_buffer::Array{Sample, 2}
-        number_of_channels::Int
-
-        function $TypeName{Sample}(name, stream, channels) where {Sample}
-            # portaudio data comes in interleaved, so we'll end up transposing
-            # it back and forth to julia column-major
-            new(name, stream, zeros(Sample, channels, CHUNK_FRAMES), channels)
-        end
-    end
+struct PortAudioSink{Sample} <: SampleSink
+    stream::PortAudioStream{Sample}
 end
 
-nchannels(sink_or_source::Union{PortAudioSink, PortAudioSource}) = sink_or_source.number_of_channels
+struct PortAudioSource <: SampleSource
+    stream::PortAudioStream{Sample}
+end
+
+nchannels(sink::PortAudioSink) = nchannels(sink.stream.sink_portal)
+nchannels(source::PortAudioSource) = nchannels(source.stream.source_portal)
 samplerate(sink_or_source::Union{PortAudioSink, PortAudioSource}) = samplerate(sink_or_source.stream)
 eltype(::Union{PortAudioSink{Sample}, PortAudioSource{Sample}}) where {Sample} = Sample
 function close(sink_or_source::Union{PortAudioSink, PortAudioSource})
-    throw(ErrorException("Attempted to close PortAudioSink or PortAudioSource.
-                          Close the containing PortAudioStream instead"))
+    close(sink_or_source.stream)
 end
 isopen(sink_or_source::Union{PortAudioSink, PortAudioSource}) = isopen(sink_or_source.stream)
-name(sink_or_source::Union{PortAudioSink, PortAudioSource}) = sink_or_source.name
+name(sink::PortAudioSink) = name(sink.stream.sink_portal)
+name(source::PortAudioSource) = name(source.stream.source_portal)
 
 function show(io::IO, ::Type{PortAudioSink{Sample}}) where Sample
     print(io, "PortAudioSink{$Sample}")
@@ -321,14 +336,14 @@ function show(io::IO, ::Type{PortAudioSource{Sample}}) where Sample
     print(io, "PortAudioSource{$Sample}")
 end
 
-function show(io::IO, stream::SinkOrSource) where {SinkOrSource <: Union{PortAudioSink, PortAudioSource}}
-    print(io, nchannels(stream), "-channel ", SinkOrSource, "(\"", stream.name, "\")")
+function show(io::IO, sink_or_source::SinkOrSource) where {SinkOrSource <: Union{PortAudioSink, PortAudioSource}}
+    print(io, nchannels(sink_or_source), "-channel ", SinkOrSource, "(\"", name(sink_or_source), "\")")
 end
 
 function unsafe_write(sink::PortAudioSink, buf::Array, frameoffset, framecount)
     stream = sink.stream
     stream_pointer = stream.stream_pointer
-    chunk_buffer = sink.chunk_buffer
+    chunk_buffer = stream.sink_portal.chunk_buffer
     warn_xruns = stream.warn_xruns
     recover_xruns = stream.recover_xruns
     number_written = 0
@@ -356,7 +371,7 @@ end
 function unsafe_read!(source::PortAudioSource, buf::Array, frameoffset, framecount)
     stream = source.stream
     stream_pointer = stream.stream_pointer
-    chunk_buffer = source.chunk_buffer
+    chunk_buffer = stream.source_portal.chunk_buffer
     warn_xruns = stream.warn_xruns
     recover_xruns = stream.recover_xruns
     number_read = 0
@@ -390,7 +405,7 @@ Fill the playback buffer of the given sink.
 function prefill_output(stream::PortAudioStream)
     sink = stream.sink
     stream_pointer = sink.stream.stream_pointer
-    chunk_buffer = sink.chunk_buffer
+    chunk_buffer = stream.sink_portal.chunk_buffer
     a_zero = zero(eltype(chunk_buffer))
     to_write = Pa_GetStreamWriteAvailable(stream_pointer)
     while to_write > 0
@@ -407,9 +422,8 @@ end
 Read and discard data from the capture buffer.
 """
 function discard_input(stream::PortAudioStream)
-    source = stream.source
-    stream_pointer = source.stream.stream_pointer
-    chunk_buffer = source.chunk_buffer
+    stream_pointer = stream.stream_pointer
+    chunk_buffer = stream.source_portal.chunk_buffer
     to_read = Pa_GetStreamReadAvailable(stream_pointer)
     while to_read > 0
         number = min(to_read, CHUNK_FRAMES)
