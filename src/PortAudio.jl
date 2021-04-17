@@ -193,11 +193,11 @@ function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudio
         warn_xruns = false, 
         recover_xruns = true
     )
-    input_channels = fill_max(input_channels, input_device.input)
-    output_channels = fill_max(output_channels, output_device.output)
+    input_channels_filled = fill_max(input_channels, input_device.input)
+    output_channels_filled = fill_max(output_channels, output_device.output)
     # finalizer(close, this)
-    input_parameters = make_parameters(input_channels, input_device)
-    output_parameters = make_parameters(output_channels, output_device)
+    input_parameters = make_parameters(input_channels_filled, input_device)
+    output_parameters = make_parameters(output_channels_filled, output_device)
     stream_pointer = suppress_err() do
         Pa_OpenStream(
             input_parameters, 
@@ -221,7 +221,7 @@ function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudio
         Portal(input_device, input_channels; Sample = Sample)
     )
     prefill_output(stream)
-    PortAudioStream{eltype}(input_device, output_device, input_channels, output_channels, the_sample_rate,
+    PortAudioStream{eltype}(input_device, output_device, input_channels_filled, output_channels_filled, the_sample_rate,
                             latency, warn_xruns, recover_xruns)
 end
 
