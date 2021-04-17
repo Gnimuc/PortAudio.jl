@@ -124,39 +124,6 @@ end
 # TODO: recover from xruns - currently with low latencies (e.g. 0.01) it
 # will run fine for a while and then fail with the first xrun.
 # TODO: figure out whether we can get deterministic latency...
-function PortAudioStream{Sample}(input_device::PortAudioDevice, output_device::PortAudioDevice,
-    input_channels, output_channels, the_sample_rate,
-    latency, warn_xruns, recover_xruns) where {Sample}
-    input_channels = fill_max(input_channels, input_device.input)
-    output_channels = fill_max(output_channels, output_device.output)
-    # finalizer(close, this)
-    input_parameters = make_parameters(input_channels, input_device)
-    output_parameters = make_parameters(output_channels, output_device)
-    stream_pointer = suppress_err() do
-        Pa_OpenStream(
-            input_parameters, 
-            output_parameters, 
-            the_sample_rate, 
-            0, 
-            PA_NO_FLAG, 
-            nothing, 
-            nothing
-        )
-    end
-    Pa_StartStream(stream_pointer)
-    # pre-fill the output stream so we're less likely to underrun
-    stream = PortAudioStream(
-        the_sample_rate,
-        latency,
-        stream_pointer,
-        warn_xruns,
-        recover_xruns,
-        Portal(output_device, output_channels; Sample = Sample),
-        Portal(input_device, input_channels; Sample = Sample)
-    )
-    prefill_output(stream)
-    stream
-end
 
 function recover_xrun(stream::PortAudioStream)
     sink_portal = stream.sink_portal
@@ -220,14 +187,46 @@ Options:
 function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudioDevice;
         input_channels = 2, 
         output_channels = 2, 
-        eltype=Float32, 
+        eltype = Float32, 
         the_sample_rate = get_default_sample_rate(input_device, input_channels, output_device, output_channels),
-        latency=default_latency(input_device, output_device), 
-        warn_xruns=false, 
-        recover_xruns=true
+        latency = default_latency(input_device, output_device), 
+        warn_xruns = false, 
+        recover_xruns = true
     )
+    input_channels = fill_max(input_channels, input_device.input)
+    output_channels = fill_max(output_channels, output_device.output)
+    # finalizer(close, this)
+    input_parameters = make_parameters(input_channels, input_device)
+    output_parameters = make_parameters(output_channels, output_device)
+    stream_pointer = suppress_err() do
+        Pa_OpenStream(
+            input_parameters, 
+            output_parameters, 
+            the_sample_rate, 
+            0, 
+            PA_NO_FLAG, 
+            nothing, 
+            nothing
+        )
+    end
+    Pa_StartStream(stream_pointer)
+    # pre-fill the output stream so we're less likely to underrun
+    stream = PortAudioStream(
+        the_sample_rate,
+        latency,
+        stream_pointer,
+        warn_xruns,
+        recover_xruns,
+        Portal(output_device, output_channels; Sample = Sample),
+        Portal(input_device, input_channels; Sample = Sample)
+    )
+    prefill_output(stream)
     PortAudioStream{eltype}(input_device, output_device, input_channels, output_channels, the_sample_rate,
                             latency, warn_xruns, recover_xruns)
+end
+
+function get_device(device::PortAudioDevice)
+    device
 end
 
 function get_device(device_name::String)
@@ -253,25 +252,18 @@ end
 # if one device is given, use it for input and output, but set input_channels=0 so we
 # end up with an output-only stream
 function PortAudioStream(device;
-    output_channels = 2; 
     keyword_arguments...
 )
-    PortAudioStream(device, device; input_channels = 0, output_channels = output_channels, keyword_arguments...)
+    PortAudioStream(device, device; input_channels = 0, keyword_arguments...)
 end
 
 # use the default input and output devices
 function PortAudioStream(;
-    input_channels = 2, 
-    output_channels = 2; 
     keyword_arguments...
 )
-    input_index = Pa_GetDefaultInputDevice()
-    output_index = Pa_GetDefaultOutputDevice()
     PortAudioStream(
-        input_index, 
-        output_index;
-        input_channels = input_channels, 
-        output_channels = output_channels,
+        Pa_GetDefaultInputDevice(), 
+        Pa_GetDefaultOutputDevice();
         keyword_arguments...
     )
 end
