@@ -99,51 +99,51 @@ mutable struct PortAudioStream{Sample}
     recover_xruns::Bool
     sink_portal::Portal{Sample}
     source_portal::Portal{Sample}
+end
 
-    # this inner constructor is generally called via the top-level outer
-    # constructor below
+# this inner constructor is generally called via the top-level outer
+# constructor below
 
-    # TODO: pre-fill outbut buffer on init
-    # TODO: recover from xruns - currently with low latencies (e.g. 0.01) it
-    # will run fine for a while and then fail with the first xrun.
-    # TODO: figure out whether we can get deterministic latency...
-    function PortAudioStream{Sample}(input_device::PortAudioDevice, output_device::PortAudioDevice,
-                                input_channels, output_channels, the_sample_rate,
-                                latency, warn_xruns, recover_xruns) where {Sample}
-        input_channels = input_channels == -1 ? input_device.input.max_channels : input_channels
-        output_channels = output_channels == -1 ? output_device.output.max_channels : output_channels
-        # finalizer(close, this)
-        input_parameters = (input_channels == 0) ?
-            Ptr{Pa_StreamParameters}(0) :
-            Ref(Pa_StreamParameters(input_device.index, input_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
-        output_parameters = (output_channels == 0) ?
-            Ptr{Pa_StreamParameters}(0) :
-            Ref(Pa_StreamParameters(output_device.index, output_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
-        stream_pointer = suppress_err() do
-            Pa_OpenStream(
-                input_parameters, 
-                output_parameters, 
-                the_sample_rate, 
-                0, 
-                PA_NO_FLAG, 
-                nothing, 
-                nothing
-            )
-        end
-        Pa_StartStream(stream_pointer)
-        # pre-fill the output stream so we're less likely to underrun
-        stream = PortAudioStream(
-            the_sample_rate,
-            latency,
-            stream_pointer,
-            warn_xruns,
-            recover_xruns,
-            Portal(output_device, output_channels; Sample = Sample),
-            Portal(input_device, input_channels; Sample = Sample)
+# TODO: pre-fill outbut buffer on init
+# TODO: recover from xruns - currently with low latencies (e.g. 0.01) it
+# will run fine for a while and then fail with the first xrun.
+# TODO: figure out whether we can get deterministic latency...
+function PortAudioStream{Sample}(input_device::PortAudioDevice, output_device::PortAudioDevice,
+    input_channels, output_channels, the_sample_rate,
+    latency, warn_xruns, recover_xruns) where {Sample}
+    input_channels = input_channels == -1 ? input_device.input.max_channels : input_channels
+    output_channels = output_channels == -1 ? output_device.output.max_channels : output_channels
+    # finalizer(close, this)
+    input_parameters = (input_channels == 0) ?
+        Ptr{Pa_StreamParameters}(0) :
+        Ref(Pa_StreamParameters(input_device.index, input_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
+    output_parameters = (output_channels == 0) ?
+        Ptr{Pa_StreamParameters}(0) :
+        Ref(Pa_StreamParameters(output_device.index, output_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
+    stream_pointer = suppress_err() do
+        Pa_OpenStream(
+            input_parameters, 
+            output_parameters, 
+            the_sample_rate, 
+            0, 
+            PA_NO_FLAG, 
+            nothing, 
+            nothing
         )
-        prefill_output(stream)
-        stream
     end
+    Pa_StartStream(stream_pointer)
+    # pre-fill the output stream so we're less likely to underrun
+    stream = PortAudioStream(
+        the_sample_rate,
+        latency,
+        stream_pointer,
+        warn_xruns,
+        recover_xruns,
+        Portal(output_device, output_channels; Sample = Sample),
+        Portal(input_device, input_channels; Sample = Sample)
+    )
+    prefill_output(stream)
+    stream
 end
 
 function recover_xrun(stream::PortAudioStream)
