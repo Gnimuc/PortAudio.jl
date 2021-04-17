@@ -78,7 +78,7 @@ device_names() = join(["\"$(device.name)\"" for device in devices()], "\n")
 mutable struct PortAudioStream{Sample}
     the_sample_rate::Float64
     latency::Float64
-    stream::PaStream
+    stream_pointer::PaStream
     warn_xruns::Bool
     recover_xruns::Bool
     sink # untyped because of circular type definition
@@ -107,7 +107,7 @@ mutable struct PortAudioStream{Sample}
         output_parameters = (output_channels == 0) ?
             Ptr{Pa_StreamParameters}(0) :
             Ref(Pa_StreamParameters(output_device.index, output_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
-        stream = suppress_err() do
+        stream_pointer = suppress_err() do
             Pa_OpenStream(
                 input_parameters, 
                 output_parameters, 
@@ -118,8 +118,8 @@ mutable struct PortAudioStream{Sample}
                 nothing
             )
         end
-        this.stream = stream
-        Pa_StartStream(stream)
+        this.stream_pointer = stream_pointer
+        Pa_StartStream(stream_pointer)
         # pre-fill the output stream so we're less likely to underrun
         prefill_output(sink)
         this
@@ -248,17 +248,17 @@ function PortAudioStream(do_function::Function, arguments...; keyword_arguments.
 end
 
 function close(stream::PortAudioStream)
-    stream_pointer = stream.stream
+    stream_pointer = stream.stream_pointer
     if stream_pointer != C_NULL
         Pa_StopStream(stream_pointer)
         Pa_CloseStream(stream_pointer)
-        stream.stream = C_NULL
+        stream.stream_pointer = C_NULL
     end
 
     nothing
 end
 
-isopen(stream::PortAudioStream) = stream.stream != C_NULL
+isopen(stream::PortAudioStream) = stream.stream_pointer != C_NULL
 
 samplerate(stream::PortAudioStream) = stream.the_sample_rate
 eltype(::PortAudioStream{Sample}) where Sample = Sample
@@ -327,7 +327,7 @@ end
 
 function unsafe_write(sink::PortAudioSink, buf::Array, frameoffset, framecount)
     stream = sink.stream
-    stream_pointer = stream.stream
+    stream_pointer = stream.stream_pointer
     chunk_buffer = sink.chunk_buffer
     warn_xruns = stream.warn_xruns
     recover_xruns = stream.recover_xruns
@@ -355,7 +355,7 @@ end
 
 function unsafe_read!(source::PortAudioSource, buf::Array, frameoffset, framecount)
     stream = source.stream
-    stream_pointer = stream.stream
+    stream_pointer = stream.stream_pointer
     chunk_buffer = source.chunk_buffer
     warn_xruns = stream.warn_xruns
     recover_xruns = stream.recover_xruns
@@ -388,7 +388,7 @@ end
 Fill the playback buffer of the given sink.
 """
 function prefill_output(sink::PortAudioSink)
-    stream_pointer = sink.stream.stream
+    stream_pointer = sink.stream.stream_pointer
     chunk_buffer = sink.chunk_buffer
     a_zero = zero(eltype(chunk_buffer))
     to_write = Pa_GetStreamWriteAvailable(stream_pointer)
@@ -406,7 +406,7 @@ end
 Read and discard data from the capture buffer.
 """
 function discard_input(source::PortAudioSource)
-    stream_pointer = source.stream.stream
+    stream_pointer = source.stream.stream_pointer
     chunk_buffer = source.chunk_buffer
     to_read = Pa_GetStreamReadAvailable(stream_pointer)
     while to_read > 0
