@@ -101,6 +101,22 @@ mutable struct PortAudioStream{Sample}
     source_portal::Portal{Sample}
 end
 
+function fill_max(channels, portal)
+    if channels === max
+        portal.max_channels
+    else 
+        channels
+    end
+end
+
+function make_parameters(channels, device)
+    if channels == 0
+        Ptr{Pa_StreamParameters}(0)
+    else
+        Ref(Pa_StreamParameters(device.index, channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
+    end
+end
+
 # this inner constructor is generally called via the top-level outer
 # constructor below
 
@@ -111,25 +127,11 @@ end
 function PortAudioStream{Sample}(input_device::PortAudioDevice, output_device::PortAudioDevice,
     input_channels, output_channels, the_sample_rate,
     latency, warn_xruns, recover_xruns) where {Sample}
-    input_channels = 
-        if input_channels === max
-            input_device.input.max_channels
-        else 
-            input_channels
-        end
-    output_channels = 
-        if output_channels === max
-            output_device.output.max_channels
-        else
-            output_channels
-        end
+    input_channels = fill_max(input_channels, input_device.input)
+    output_channels = fill_max(output_channels, output_device.output)
     # finalizer(close, this)
-    input_parameters = (input_channels == 0) ?
-        Ptr{Pa_StreamParameters}(0) :
-        Ref(Pa_StreamParameters(input_device.index, input_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
-    output_parameters = (output_channels == 0) ?
-        Ptr{Pa_StreamParameters}(0) :
-        Ref(Pa_StreamParameters(output_device.index, output_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
+    input_parameters = make_parameters(input_channels, input_device)
+    output_parameters = make_parameters(output_channels, output_device)
     stream_pointer = suppress_err() do
         Pa_OpenStream(
             input_parameters, 
