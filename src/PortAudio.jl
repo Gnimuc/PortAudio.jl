@@ -227,27 +227,20 @@ function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudio
                             latency, warn_xruns, recover_xruns)
 end
 
+function get_device(device_name)
+    for device in devices()
+        if device.name == device_name
+            return device
+        end
+    end
+    if device === nothing
+        error("No device matching \"$device_name\" found.\nAvailable Devices:\n$(device_names())")
+    end
+end
+
 # handle device names given as streams
 function PortAudioStream(input_device_name::AbstractString, output_device_name::AbstractString, arguments...; keyword_arguments...)
-    input_device = nothing
-    output_device = nothing
-    for device in devices()
-        the_name = device.name
-        if the_name == input_device_name
-            input_device = device
-        end
-        if the_name == output_device_name
-            output_device = device
-        end
-    end
-    if input_device === nothing
-        error("No device matching \"$input_device_name\" found.\nAvailable Devices:\n$(device_names())")
-    end
-    if output_device === nothing
-        error("No device matching \"$output_device_name\" found.\nAvailable Devices:\n$(device_names())")
-    end
-
-    PortAudioStream(input_device, output_device, arguments...; keyword_arguments...)
+    PortAudioStream(get_device(input_device_name), get_device(output_device_name), arguments...; keyword_arguments...)
 end
 
 # if one device is given, use it for input and output, but set input_channels=0 so we
