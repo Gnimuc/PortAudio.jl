@@ -13,6 +13,8 @@ using Base.Sys: islinux, iswindows
 import LinearAlgebra
 import LinearAlgebra: transpose!
 
+import SampledSignals: nchannels, samplerate, unsafe_read!, unsafe_write
+
 export PortAudioStream
 
 include("libportaudio.jl")
@@ -258,7 +260,7 @@ end
 
 isopen(stream::PortAudioStream) = stream.stream != C_NULL
 
-SampledSignals.samplerate(stream::PortAudioStream) = stream.the_sample_rate
+samplerate(stream::PortAudioStream) = stream.the_sample_rate
 eltype(::PortAudioStream{Sample}) where Sample = Sample
 
 read(stream::PortAudioStream, arguments...) = read(stream.source, arguments...)
@@ -301,8 +303,8 @@ for (TypeName, Super) in ((:PortAudioSink, :SampleSink),
     end
 end
 
-SampledSignals.nchannels(sink_or_source::Union{PortAudioSink, PortAudioSource}) = sink_or_source.number_of_channels
-SampledSignals.samplerate(sink_or_source::Union{PortAudioSink, PortAudioSource}) = samplerate(sink_or_source.stream)
+nchannels(sink_or_source::Union{PortAudioSink, PortAudioSource}) = sink_or_source.number_of_channels
+samplerate(sink_or_source::Union{PortAudioSink, PortAudioSource}) = samplerate(sink_or_source.stream)
 eltype(::Union{PortAudioSink{Sample}, PortAudioSource{Sample}}) where {Sample} = Sample
 function close(sink_or_source::Union{PortAudioSink, PortAudioSource})
     throw(ErrorException("Attempted to close PortAudioSink or PortAudioSource.
@@ -323,7 +325,7 @@ function show(io::IO, stream::SinkOrSource) where {SinkOrSource <: Union{PortAud
     print(io, nchannels(stream), "-channel ", SinkOrSource, "(\"", stream.name, "\")")
 end
 
-function SampledSignals.unsafe_write(sink::PortAudioSink, buf::Array, frameoffset, framecount)
+function unsafe_write(sink::PortAudioSink, buf::Array, frameoffset, framecount)
     stream = sink.stream
     stream_pointer = stream.stream
     chunk_buffer = sink.chunk_buffer
@@ -351,7 +353,7 @@ function SampledSignals.unsafe_write(sink::PortAudioSink, buf::Array, frameoffse
     number_written
 end
 
-function SampledSignals.unsafe_read!(source::PortAudioSource, buf::Array, frameoffset, framecount)
+function unsafe_read!(source::PortAudioSource, buf::Array, frameoffset, framecount)
     stream = source.stream
     stream_pointer = stream.stream
     chunk_buffer = source.chunk_buffer
