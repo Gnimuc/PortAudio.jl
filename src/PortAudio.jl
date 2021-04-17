@@ -121,7 +121,7 @@ mutable struct PortAudioStream{Sample}
         this.stream_pointer = stream_pointer
         Pa_StartStream(stream_pointer)
         # pre-fill the output stream so we're less likely to underrun
-        prefill_output(sink)
+        prefill_output(stream)
         this
     end
 end
@@ -138,8 +138,8 @@ function recover_xrun(stream::PortAudioStream)
         # move to some kind of transaction API that forces them to be balanced, and also
         # gives a way for the application to signal that the same number of samples
         # should have been read as written.
-        discard_input(source)
-        prefill_output(sink)
+        discard_input(stream)
+        prefill_output(stream)
     end
 end
 
@@ -383,11 +383,12 @@ function unsafe_read!(source::PortAudioSource, buf::Array, frameoffset, framecou
 end
 
 """
-    prefill_output(sink::PortAudioSink)
+    prefill_output(stream::PortAudioStream)
 
 Fill the playback buffer of the given sink.
 """
-function prefill_output(sink::PortAudioSink)
+function prefill_output(stream::PortAudioStream)
+    sink = stream.sink
     stream_pointer = sink.stream.stream_pointer
     chunk_buffer = sink.chunk_buffer
     a_zero = zero(eltype(chunk_buffer))
@@ -405,7 +406,8 @@ end
 
 Read and discard data from the capture buffer.
 """
-function discard_input(source::PortAudioSource)
+function discard_input(stream::PortAudioStream)
+    source = stream.source
     stream_pointer = source.stream.stream_pointer
     chunk_buffer = source.chunk_buffer
     to_read = Pa_GetStreamReadAvailable(stream_pointer)
