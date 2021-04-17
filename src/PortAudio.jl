@@ -217,8 +217,9 @@ Options:
                     fewer xruns but could make each xrun more audible. True by default.
                     Only effects duplex streams.
 """
-function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudioDevice,
-        input_channels=2, output_channels=2; 
+function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudioDevice;
+        input_channels = 2, 
+        output_channels = 2, 
         eltype=Float32, 
         the_sample_rate = get_default_sample_rate(input_device, input_channels, output_device, output_channels),
         latency=default_latency(input_device, output_device), 
@@ -247,22 +248,26 @@ end
 
 # if one device is given, use it for input and output, but set input_channels=0 so we
 # end up with an output-only stream
-function PortAudioStream(device::PortAudioDevice, input_channels=2, output_channels=2; keyword_arguments...)
-    PortAudioStream(device, device, input_channels, output_channels; keyword_arguments...)
-end
-function PortAudioStream(device::AbstractString, input_channels=2, output_channels=2; keyword_arguments...)
-    PortAudioStream(device, device, input_channels, output_channels; keyword_arguments...)
+function PortAudioStream(device;
+    output_channels = 2; 
+    keyword_arguments...
+)
+    PortAudioStream(device, device; input_channels = 0, output_channels = output_channels, keyword_arguments...)
 end
 
 # use the default input and output devices
-function PortAudioStream(input_channels=2, output_channels=2; keyword_arguments...)
+function PortAudioStream(;
+    input_channels = 2, 
+    output_channels = 2; 
+    keyword_arguments...
+)
     input_index = Pa_GetDefaultInputDevice()
     output_index = Pa_GetDefaultOutputDevice()
     PortAudioStream(
         PortAudioDevice(Pa_GetDeviceInfo(input_index), input_index), 
         PortAudioDevice(Pa_GetDeviceInfo(output_index), output_index), 
-        input_channels, 
-        output_channels; 
+        input_channels = input_channels, 
+        output_channels = output_channels; 
         keyword_arguments...
     )
 end
@@ -350,6 +355,8 @@ end
 function show(io::IO, sink_or_source::SinkOrSource) where {SinkOrSource <: Union{PortAudioSink, PortAudioSource}}
     print(io, nchannels(sink_or_source), "-channel ", SinkOrSource, "(\"", name(sink_or_source), "\")")
 end
+
+function loop_copy()
 
 function unsafe_write(sink::PortAudioSink, buf::Array, frameoffset, framecount)
     stream = sink.stream
