@@ -230,7 +230,7 @@ function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudio
                             latency, warn_xruns, recover_xruns)
 end
 
-function get_device(device_name)
+function get_device(device_name::String)
     for device in devices()
         if device.name == device_name
             return device
@@ -241,9 +241,13 @@ function get_device(device_name)
     end
 end
 
+function get_device(index::Int)
+    PortAudioDevice(Pa_GetDeviceInfo(index), index)
+end
+
 # handle device names given as streams
-function PortAudioStream(input_device_name::AbstractString, output_device_name::AbstractString, arguments...; keyword_arguments...)
-    PortAudioStream(get_device(input_device_name), get_device(output_device_name), arguments...; keyword_arguments...)
+function PortAudioStream(input_device_name::AbstractString, output_device_name::AbstractString; keyword_arguments...)
+    PortAudioStream(get_device(input_device_name), get_device(output_device_name); keyword_arguments...)
 end
 
 # if one device is given, use it for input and output, but set input_channels=0 so we
@@ -264,8 +268,8 @@ function PortAudioStream(;
     input_index = Pa_GetDefaultInputDevice()
     output_index = Pa_GetDefaultOutputDevice()
     PortAudioStream(
-        PortAudioDevice(Pa_GetDeviceInfo(input_index), input_index), 
-        PortAudioDevice(Pa_GetDeviceInfo(output_index), output_index), 
+        get_device(input_index), 
+        get_device(output_index), 
         input_channels = input_channels, 
         output_channels = output_channels; 
         keyword_arguments...
