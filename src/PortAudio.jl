@@ -89,26 +89,26 @@ mutable struct PortAudioStream{Sample}
     # TODO: recover from xruns - currently with low latencies (e.g. 0.01) it
     # will run fine for a while and then fail with the first xrun.
     # TODO: figure out whether we can get deterministic latency...
-    function PortAudioStream{Sample}(in_device::PortAudioDevice, out_device::PortAudioDevice,
-                                in_channels, out_channels, the_sample_rate,
+    function PortAudioStream{Sample}(input_device::PortAudioDevice, output_device::PortAudioDevice,
+                                input_channels, output_channels, the_sample_rate,
                                 latency, warn_xruns, recover_xruns) where {Sample}
-        in_channels = in_channels == -1 ? in_device.input.max_channels : in_channels
-        out_channels = out_channels == -1 ? out_device.output.max_channels : out_channels
+        input_channels = input_channels == -1 ? input_device.input.max_channels : input_channels
+        output_channels = output_channels == -1 ? output_device.output.max_channels : output_channels
         this = new(the_sample_rate, latency, C_NULL, warn_xruns, recover_xruns)
         # finalizer(close, this)
-        sink = PortAudioSink{Sample}(out_device.name, this, out_channels)
+        sink = PortAudioSink{Sample}(output_device.name, this, output_channels)
         this.sink = sink
-        this.source = PortAudioSource{Sample}(in_device.name, this, in_channels)
-        in_parameters = (in_channels == 0) ?
+        this.source = PortAudioSource{Sample}(input_device.name, this, input_channels)
+        input_parameters = (input_channels == 0) ?
             Ptr{Pa_StreamParameters}(0) :
-            Ref(Pa_StreamParameters(in_device.index, in_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
-        out_parameters = (out_channels == 0) ?
+            Ref(Pa_StreamParameters(input_device.index, input_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
+        output_parameters = (output_channels == 0) ?
             Ptr{Pa_StreamParameters}(0) :
-            Ref(Pa_StreamParameters(out_device.index, out_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
+            Ref(Pa_StreamParameters(output_device.index, output_channels, TYPE_TO_FORMAT[Sample], latency, C_NULL))
         stream = suppress_err() do
             Pa_OpenStream(
-                in_parameters, 
-                out_parameters, 
+                input_parameters, 
+                output_parameters, 
                 the_sample_rate, 
                 0, 
                 PA_NO_FLAG, 
@@ -169,68 +169,68 @@ Options:
                     fewer xruns but could make each xrun more audible. True by default.
                     Only effects duplex streams.
 """
-function PortAudioStream(in_device::PortAudioDevice, out_device::PortAudioDevice,
-        in_channels=2, out_channels=2; eltype=Float32, samplerate=-1,
-        latency=default_latency(in_device, out_device), warn_xruns=false, recover_xruns=true)
+function PortAudioStream(input_device::PortAudioDevice, output_device::PortAudioDevice,
+        input_channels=2, output_channels=2; eltype=Float32, samplerate=-1,
+        latency=default_latency(input_device, output_device), warn_xruns=false, recover_xruns=true)
     if samplerate == -1
-        sample_rate_in = in_device.default_sample_rate
-        sample_rate_out = out_device.default_sample_rate
-        if in_channels > 0 && out_channels > 0 && sample_rate_in != sample_rate_out
+        sample_rate_input = input_device.default_sample_rate
+        sample_rate_output = output_device.default_sample_rate
+        if input_channels > 0 && output_channels > 0 && sample_rate_input != sample_rate_output
             error("""
-            Can't open duplex stream with mismatched samplerates (in: $sample_rate_in, out: $sample_rate_out).
+            Can't open duplex stream with mismatched samplerates (in: $sample_rate_input, out: $sample_rate_output).
                    Try changing your sample rate in your driver settings or open separate input and output
                    streams""")
-        elseif in_channels > 0
-            samplerate = sample_rate_in
+        elseif input_channels > 0
+            samplerate = sample_rate_input
         else
-            samplerate = sample_rate_out
+            samplerate = sample_rate_output
         end
     end
-    PortAudioStream{eltype}(in_device, out_device, in_channels, out_channels, samplerate,
+    PortAudioStream{eltype}(input_device, output_device, input_channels, output_channels, samplerate,
                             latency, warn_xruns, recover_xruns)
 end
 
 # handle device names given as streams
-function PortAudioStream(indevname::AbstractString, outdevname::AbstractString, arguments...; keyword_arguments...)
-    in_device = nothing
-    out_device = nothing
+function PortAudioStream(input_device_name::AbstractString, output_device_name::AbstractString, arguments...; keyword_arguments...)
+    input_device = nothing
+    output_device = nothing
     for device in devices()
         the_name = device.name
-        if the_name == indevname
-            in_device = device
+        if the_name == input_device_name
+            input_device = device
         end
-        if the_name == outdevname
-            out_device = device
+        if the_name == output_device_name
+            output_device = device
         end
     end
-    if in_device == nothing
-        error("No device matching \"$indevname\" found.\nAvailable Devices:\n$(device_names())")
+    if input_device == nothing
+        error("No device matching \"$input_device_name\" found.\nAvailable Devices:\n$(device_names())")
     end
-    if out_device == nothing
-        error("No device matching \"$outdevname\" found.\nAvailable Devices:\n$(device_names())")
+    if output_device == nothing
+        error("No device matching \"$output_device_name\" found.\nAvailable Devices:\n$(device_names())")
     end
 
-    PortAudioStream(in_device, out_device, arguments...; keyword_arguments...)
+    PortAudioStream(input_device, output_device, arguments...; keyword_arguments...)
 end
 
-# if one device is given, use it for input and output, but set in_channels=0 so we
+# if one device is given, use it for input and output, but set input_channels=0 so we
 # end up with an output-only stream
-function PortAudioStream(device::PortAudioDevice, in_channels=2, out_channels=2; keyword_arguments...)
-    PortAudioStream(device, device, in_channels, out_channels; keyword_arguments...)
+function PortAudioStream(device::PortAudioDevice, input_channels=2, output_channels=2; keyword_arguments...)
+    PortAudioStream(device, device, input_channels, output_channels; keyword_arguments...)
 end
-function PortAudioStream(device::AbstractString, in_channels=2, out_channels=2; keyword_arguments...)
-    PortAudioStream(device, device, in_channels, out_channels; keyword_arguments...)
+function PortAudioStream(device::AbstractString, input_channels=2, output_channels=2; keyword_arguments...)
+    PortAudioStream(device, device, input_channels, output_channels; keyword_arguments...)
 end
 
 # use the default input and output devices
-function PortAudioStream(in_channels=2, out_channels=2; keyword_arguments...)
-    in_index = Pa_GetDefaultInputDevice()
-    out_index = Pa_GetDefaultOutputDevice()
+function PortAudioStream(input_channels=2, output_channels=2; keyword_arguments...)
+    input_index = Pa_GetDefaultInputDevice()
+    output_index = Pa_GetDefaultOutputDevice()
     PortAudioStream(
-        PortAudioDevice(Pa_GetDeviceInfo(in_index), in_index), 
-        PortAudioDevice(Pa_GetDeviceInfo(out_index), out_index), 
-        in_channels, 
-        out_channels; 
+        PortAudioDevice(Pa_GetDeviceInfo(input_index), input_index), 
+        PortAudioDevice(Pa_GetDeviceInfo(output_index), output_index), 
+        input_channels, 
+        output_channels; 
         keyword_arguments...
     )
 end

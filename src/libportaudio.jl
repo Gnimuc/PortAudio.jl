@@ -147,14 +147,14 @@ mutable struct PaStreamInfo
     the_sample_rate::Cdouble
 end
 
-# function Pa_OpenDefaultStream(in_channels, out_channels,
+# function Pa_OpenDefaultStream(input_channels, output_channels,
 #                               sample_format::PaSampleFormat,
 #                               the_sample_rate, frames_per_buffer)
 #     stream_pointer = Ref{PaStream}(0)
 #     handle_status(@ccall libportaudio.Pa_OpenDefaultStream(
 #         stream_pointer::Ref{PaStream},
-#         in_channels::Cint,
-#         out_channels::Cint,
+#         input_channels::Cint,
+#         output_channels::Cint,
 #         sample_format::PaSampleFormat,
 #         the_sample_rate::Cdouble,
 #         frames_per_buffer::Culong,
@@ -165,7 +165,7 @@ end
 #     stream_pointer[]
 # end
 #
-function Pa_OpenStream(in_parameters, out_parameters,
+function Pa_OpenStream(input_parameters, output_parameters,
                        the_sample_rate, frames_per_buffer,
                        flags::PaStreamFlags,
                        callback, userdata)
@@ -173,8 +173,8 @@ function Pa_OpenStream(in_parameters, out_parameters,
     handle_status(lock(PA_MUTEX) do 
         @ccall libportaudio.Pa_OpenStream(
             stream_pointer::Ref{PaStream},
-            in_parameters::Ref{Pa_StreamParameters},
-            out_parameters::Ref{Pa_StreamParameters},
+            input_parameters::Ref{Pa_StreamParameters},
+            output_parameters::Ref{Pa_StreamParameters},
             float(the_sample_rate)::Cdouble,
             frames_per_buffer::Culong,
             flags::PaStreamFlags,
