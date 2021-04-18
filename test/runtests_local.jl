@@ -19,25 +19,28 @@ end
 @testset "Local Tests" begin
     @testset "Open Default Device" begin
         println("Recording...")
-        stream = PortAudioStream(2, 0)
+        stream = PortAudioStream(output_channels = 0)
         buf = read(stream, 5s)
         close(stream)
         @test size(buf) == (round(Int, 5 * samplerate(stream)), nchannels(stream.source))
         println("Playing back recording...")
-        stream = PortAudioStream(0, 2)
+        stream = PortAudioStream(;
+            input_channels = 0, 
+            output_channels = 2
+        )
         write(stream, buf)
         println("flushing...")
         flush(stream)
         close(stream)
         println("Testing pass-through")
-        stream = PortAudioStream(2, 2)
+        stream = PortAudioStream()
         write(stream, stream, 5s)
         flush(stream)
         close(stream)
         println("done")
     end
     @testset "Samplerate-converting writing" begin
-        stream = PortAudioStream(0, 2)
+        stream = PortAudioStream(input_channels = 0)
         write(stream, SinSource(eltype(stream), samplerate(stream)*0.8, [220, 330]), 3s)
         write(stream, SinSource(eltype(stream), samplerate(stream)*1.2, [220, 330]), 3s)
         flush(stream)
@@ -64,7 +67,7 @@ end
     # no way to check that the right data is actually getting read or written here,
     # but at least it's not crashing.
     @testset "Queued Writing" begin
-        stream = PortAudioStream(0, 2)
+        stream = PortAudioStream(input_channels = 0)
         buf = SampleBuf(rand(eltype(stream), 48000, nchannels(stream.sink))*0.1, samplerate(stream))
         t1 = @async write(stream, buf)
         t2 = @async write(stream, buf)
@@ -74,7 +77,7 @@ end
         close(stream)
     end
     @testset "Queued Reading" begin
-        stream = PortAudioStream(2, 0)
+        stream = PortAudioStream(output_channels = 0)
         buf = SampleBuf(rand(eltype(stream), 48000, nchannels(stream.source))*0.1, samplerate(stream))
         t1 = @async read!(stream, buf)
         t2 = @async read!(stream, buf)
