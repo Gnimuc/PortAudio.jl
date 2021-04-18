@@ -62,6 +62,31 @@ PortAudioDevice(info::PaDeviceInfo, index) = PortAudioDevice(
     ),
 )
 
+function show(io::IO, device::PortAudioDevice)
+    print(io, 
+        device.index,
+        ": ",
+        device.name
+    )
+    max_input_channels = device.input.max_channels
+    has_inputs = max_input_channels > 0
+    max_output_channels = device.output.max_channels
+    has_outputs = max_output_channels > 0
+    if has_inputs || has_outputs
+        print(io, " (")
+        if has_inputs
+            print(io, "in: ", max_input_channels)
+        end
+        if has_inputs && has_outputs
+            print(io, ", ")
+        end
+        if has_outputs
+            print(io, "out: ", max_output_channels)
+        end
+        print(io, ")")
+    end
+end
+
 function devices()
     PortAudioDevice[
         PortAudioDevice(info, index - 1) for (index, info) in enumerate(
@@ -225,17 +250,15 @@ function PortAudioStream(
     # finalizer(close, this)
     input_parameters = make_parameters(input_channels_filled, input_device)
     output_parameters = make_parameters(output_channels_filled, output_device)
-    stream_pointer = suppress_err() do
-        Pa_OpenStream(
-            input_parameters,
-            output_parameters,
-            the_sample_rate,
-            0,
-            PA_NO_FLAG,
-            nothing,
-            nothing,
-        )
-    end
+    stream_pointer = Pa_OpenStream(
+        input_parameters,
+        output_parameters,
+        the_sample_rate,
+        0,
+        PA_NO_FLAG,
+        nothing,
+        nothing,
+    )
     Pa_StartStream(stream_pointer)
     # pre-fill the output stream so we're less likely to underrun
     stream = PortAudioStream(
@@ -489,15 +512,9 @@ function discard_input(stream::PortAudioStream)
     end
 end
 
-function suppress_err(do_function::Function)
-    open((@static iswindows() ? "nul" : "/dev/null"), "w") do io
-        redirect_stderr(do_function, io)
-    end
-end
-
 function seek_config(folders)
     for folder in folders
-        if isfile(isfile(joinpath(folder, "alsa.conf")))
+        if isfile(joinpath(folder, "alsa.conf"))
             return folder
         end
     end
@@ -523,11 +540,11 @@ const ALSA_CONFIG_DIRS = ["/usr/share/alsa", "/usr/local/share/alsa", "/etc/alsa
 
 function __init__()
     if islinux()
-        get(ENV, "ALSA_CONFIG_DIR") do 
+        get!(ENV, "ALSA_CONFIG_DIR") do 
             seek_config(ALSA_CONFIG_DIRS)
         end
         if alsa_plugins_jll.is_available()
-            get(ENV, "ALSA_PLUGIN_DIR") do 
+            get!(ENV, "ALSA_PLUGIN_DIR") do 
                 joinpath(alsa_plugins_jll.artifact_dir, "lib", "alsa-lib")
             end
         end
@@ -536,9 +553,7 @@ function __init__()
     # junk to STDOUT on initialization, so we swallow it.
     # TODO: actually check the junk to make sure there's nothing in there we
     # don't expect
-    suppress_err() do
-        Pa_Initialize()
-    end
+    Pa_Initialize()
 
     atexit() do
         Pa_Terminate()
