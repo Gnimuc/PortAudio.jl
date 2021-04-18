@@ -495,38 +495,41 @@ function suppress_err(do_function::Function)
     end
 end
 
+function seek_config(folders)
+    for folder in folders
+        if isfile(isfile(joinpath(folder, "alsa.conf")))
+            return folder
+        end
+    end
+    throw(
+        ErrorException(
+            """
+            Could not find ALSA config directory. Searched:
+            $(join(folders, "\n"))
+
+            if ALSA is installed, set the "ALSA_CONFIG_DIR" environment
+            variable. The given directory should have a file "alsa.conf".
+
+            If it would be useful to others, please file an issue at
+            https://github.com/JuliaAudio/PortAudio.jl/issues
+            with your alsa config directory so we can add it to the search
+            paths.
+            """,
+        ),
+    )
+end
+
+const ALSA_CONFIG_DIRS = ["/usr/share/alsa", "/usr/local/share/alsa", "/etc/alsa"]
+
 function __init__()
     if islinux()
-        config_key = "ALSA_CONFIG_DIR"
-        if config_key ∉ keys(ENV)
-            search_folders = ["/usr/share/alsa", "/usr/local/share/alsa", "/etc/alsa"]
-            config_folder_index = findfirst(search_folders) do folder
-                isfile(joinpath(folder, "alsa.conf"))
-            end
-            if config_folder_index === nothing
-                throw(
-                    ErrorException(
-                        """
-                        Could not find ALSA config directory. Searched:
-                        $(join(search_folders, "\n"))
-
-                        if ALSA is installed, set the "ALSA_CONFIG_DIR" environment
-                        variable. The given directory should have a file "alsa.conf".
-
-                        If it would be useful to others, please file an issue at
-                        https://github.com/JuliaAudio/PortAudio.jl/issues
-                        with your alsa config directory so we can add it to the search
-                        paths.
-                        """,
-                    ),
-                )
-            end
-            ENV[config_key] = search_folders[config_folder_index]
+        get(ENV, "ALSA_CONFIG_DIR") do 
+            seek_config(ALSA_CONFIG_DIRS)
         end
-
-        plugin_key = "ALSA_PLUGIN_DIR"
-        if plugin_key ∉ keys(ENV) && alsa_plugins_jll.is_available()
-            ENV[plugin_key] = joinpath(alsa_plugins_jll.artifact_dir, "lib", "alsa-lib")
+        if alsa_plugins_jll.is_available()
+            get(ENV, "ALSA_PLUGIN_DIR") do 
+                joinpath(alsa_plugins_jll.artifact_dir, "lib", "alsa-lib")
+            end
         end
     end
     # initialize PortAudio on module load. libportaudio prints a bunch of
