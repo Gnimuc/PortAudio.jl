@@ -108,7 +108,7 @@ function Portal(
     device,
     number_of_channels;
     Sample = Float32,
-    chunk_buffer = zeros(Sample, channels, CHUNK_FRAMES),
+    chunk_buffer = zeros(Sample, number_of_channels, CHUNK_FRAMES),
 )
     Portal{Sample}(device, number_of_channels, chunk_buffer)
 end
@@ -130,22 +130,22 @@ mutable struct PortAudioStream{Sample}
     source_portal::Portal{Sample}
 end
 
-function fill_max(channels, portal)
-    if channels === max
+function fill_max(number_of_channels, portal)
+    if number_of_channels === max
         portal.max_channels
     else
-        channels
+        number_of_channels
     end
 end
 
-function make_parameters(channels, device)
-    if channels == 0
+function make_parameters(Sample, number_of_channels, device, latency)
+    if number_of_channels == 0
         Ptr{Pa_StreamParameters}(0)
     else
         Ref(
             Pa_StreamParameters(
                 device.index,
-                channels,
+                number_of_channels,
                 TYPE_TO_FORMAT[Sample],
                 latency,
                 C_NULL,
@@ -234,7 +234,7 @@ function PortAudioStream(
     output_device::PortAudioDevice;
     input_channels = 2,
     output_channels = 2,
-    eltype = Float32,
+    Sample = Float32,
     the_sample_rate = get_default_sample_rate(
         input_device,
         input_channels,
@@ -248,8 +248,8 @@ function PortAudioStream(
     input_channels_filled = fill_max(input_channels, input_device.input)
     output_channels_filled = fill_max(output_channels, output_device.output)
     # finalizer(close, this)
-    input_parameters = make_parameters(input_channels_filled, input_device)
-    output_parameters = make_parameters(output_channels_filled, output_device)
+    input_parameters = make_parameters(Sample, input_channels_filled, input_device, latency)
+    output_parameters = make_parameters(Sample, output_channels_filled, output_device, latency)
     stream_pointer = Pa_OpenStream(
         input_parameters,
         output_parameters,
@@ -271,23 +271,14 @@ function PortAudioStream(
         Portal(input_device, input_channels; Sample = Sample),
     )
     prefill_output(stream)
-    PortAudioStream{eltype}(
-        input_device,
-        output_device,
-        input_channels_filled,
-        output_channels_filled,
-        the_sample_rate,
-        latency,
-        warn_xruns,
-        recover_xruns,
-    )
+    stream
 end
 
 function get_device(device::PortAudioDevice)
     device
 end
 
-function get_device(device_name::String)
+function get_device(device_name::AbstractString)
     for device in devices()
         if device.name == device_name
             return device
@@ -300,7 +291,7 @@ function get_device(device_name::String)
     end
 end
 
-function get_device(index::Int)
+function get_device(index::Integer)
     PortAudioDevice(Pa_GetDeviceInfo(index), index)
 end
 
@@ -483,8 +474,7 @@ end
 Fill the playback buffer of the given sink.
 """
 function prefill_output(stream::PortAudioStream)
-    sink = stream.sink
-    stream_pointer = sink.stream.stream_pointer
+    stream_pointer = stream.stream_pointer
     chunk_buffer = stream.sink_portal.chunk_buffer
     a_zero = zero(eltype(chunk_buffer))
     to_write = Pa_GetStreamWriteAvailable(stream_pointer)
