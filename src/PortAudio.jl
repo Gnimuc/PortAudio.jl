@@ -62,6 +62,28 @@ PortAudioDevice(info::PaDeviceInfo, index) = PortAudioDevice(
     ),
 )
 
+
+function get_device(device::PortAudioDevice)
+    device
+end
+
+function get_device(device_name::AbstractString)
+    for device in devices()
+        if device.name == device_name
+            return device
+        end
+    end
+    if device === nothing
+        error(
+            "No device matching \"$device_name\" found.\nAvailable Devices:\n$(device_names())",
+        )
+    end
+end
+
+function get_device(index::Integer)
+    PortAudioDevice(Pa_GetDeviceInfo(index), index)
+end
+
 function show(io::IO, device::PortAudioDevice)
     print(io, 
         device.index,
@@ -104,49 +126,63 @@ struct Portal{Sample}
     chunk_buffer::Array{Sample,2}
 end
 
-function Portal(
-    device,
-    number_of_channels;
-    Sample = Float32,
-    chunk_buffer = zeros(Sample, number_of_channels, CHUNK_FRAMES),
+function Portal(device, device_IO;
+    number_of_channels = 2,
+    Sample = Float32
 )
-    Portal{Sample}(device, number_of_channels, chunk_buffer)
+    number_of_channels_filled = 
+        if number_of_channels === max
+            device_IO.max_channels
+        else
+            number_of_channels
+        end
+    Portal{Sample}(device, number_of_channels_filled, zeros(Sample, number_of_channels_filled, CHUNK_FRAMES))
 end
 
-nchannels(portal::Portal) = portal.number_of_channels
-name(portal::Portal) = portal.device.name
+function input(;
+    device_id = Pa_GetDefaultInputDevice(),
+    keyword_arguments...
+)
+    device = get_device(device_id)
+    Portal(device, device.input; keyword_arguments...)
+end
 
-#
-# PortAudioStream
-#
+function output(;
+    device_id = Pa_GetDefaultOutputDevice(),
+    keyword_arguments...
+)
+    device = get_device(device_id)
+    Portal(device, device.output; keyword_arguments...)
+end
+
+function eltype(::Type{Portal{Sample}}) where {Sample}
+    Sample
+end
+
+function nchannels(portal::Portal)
+    portal.number_of_channels
+end
+function name(portal::Portal)
+    portal.device.name
+end
 
 mutable struct PortAudioStream{Sample}
+    input_portal::Portal{Sample}
+    output_portal::Portal{Sample}
+    stream_pointer::PaStream
     the_sample_rate::Float64
     latency::Float64
-    stream_pointer::PaStream
-    warn_xruns::Bool
-    recover_xruns::Bool
-    sink_portal::Portal{Sample}
-    source_portal::Portal{Sample}
 end
 
-function fill_max(number_of_channels, portal)
-    if number_of_channels === max
-        portal.max_channels
-    else
-        number_of_channels
-    end
-end
-
-function make_parameters(Sample, number_of_channels, device, latency)
-    if number_of_channels == 0
+function make_parameters(portal, latency)
+    if portal === nothing
         Ptr{Pa_StreamParameters}(0)
     else
         Ref(
             Pa_StreamParameters(
-                device.index,
-                number_of_channels,
-                TYPE_TO_FORMAT[Sample],
+                portal.device.index,
+                portal.number_of_channels,
+                TYPE_TO_FORMAT[eltype(portal)],
                 latency,
                 C_NULL,
             ),
@@ -154,52 +190,37 @@ function make_parameters(Sample, number_of_channels, device, latency)
     end
 end
 
-# this inner constructor is generally called via the top-level outer
-# constructor below
-
-# TODO: pre-fill outbut buffer on init
-# TODO: recover from xruns - currently with low latencies (e.g. 0.01) it
-# will run fine for a while and then fail with the first xrun.
-# TODO: figure out whether we can get deterministic latency...
-
-function recover_xrun(stream::PortAudioStream)
-    sink_portal = stream.sink_portal
-    source_portal = stream.source_portal
-    if nchannels(sink_portal) > 0 && nchannels(source_portal) > 0
-        # the best we can do to avoid further xruns is to fill the playback buffer and
-        # discard the capture buffer. Really there's a fundamental problem with our
-        # read/write-based API where you don't know whether we're currently in a state
-        # when the reads and writes should be balanced. In the future we should probably
-        # move to some kind of transaction API that forces them to be balanced, and also
-        # gives a way for the application to signal that the same number of samples
-        # should have been read as written.
-        discard_input(stream)
-        prefill_output(stream)
+function get_default_latency(input_portal, output_portal)
+    if input_portal === nothing
+        output_device.output.high_latency
+    elseif output_portal === nothing
+        input_device.input.high_latency
+    else
+        max(input_device.input.high_latency, output_device.output.high_latency)
     end
 end
 
-default_latency(input_device, output_device) =
-    max(input_device.input.high_latency, output_device.output.high_latency)
-
 function get_default_sample_rate(
-    input_device,
-    input_channels,
-    output_device,
-    output_channels,
+    input_portal,
+    output_portal
 )
-    sample_rate_input = input_device.default_sample_rate
-    sample_rate_output = output_device.default_sample_rate
-    if input_channels > 0 && output_channels > 0 && sample_rate_input != sample_rate_output
-        error(
-            """
-      Can't open duplex stream with mismatched samplerates (in: $sample_rate_input, out: $sample_rate_output).
-              Try changing your sample rate in your driver settings or open separate input and output
-              streams""",
-        )
-    elseif input_channels > 0
-        sample_rate_input
+    if input_portal === nothing
+        output_portal.device.default_sample_rate
+    elseif output_portal === nothing
+        input_portal.device.default_sample_rate
     else
-        sample_rate_output
+        sample_rate_input = input_portal.device.default_sample_rate
+        sample_rate_output = output_portal.device.default_sample_rate
+        if sample_rate_input != sample_rate_output
+            error(
+                """
+          Can't open duplex stream with mismatched samplerates (in: $sample_rate_input, out: $sample_rate_output).
+                  Try changing your sample rate in your driver settings or open separate input and output
+                  streams""",
+            )
+        else
+            sample_rate_input
+        end
     end
 end
 
@@ -230,26 +251,14 @@ Options:
                     Only effects duplex streams.
 """
 function PortAudioStream(
-    input_device::PortAudioDevice,
-    output_device::PortAudioDevice;
-    input_channels = 2,
-    output_channels = 2,
-    Sample = Float32,
-    the_sample_rate = get_default_sample_rate(
-        input_device,
-        input_channels,
-        output_device,
-        output_channels,
-    ),
-    latency = default_latency(input_device, output_device),
-    warn_xruns = false,
-    recover_xruns = true,
+    input_portal,
+    output_portal;
+    the_sample_rate = get_default_sample_rate(input_portal, output_portal),
+    latency = get_default_latency(input_portal, output_portal)
 )
-    input_channels_filled = fill_max(input_channels, input_device.input)
-    output_channels_filled = fill_max(output_channels, output_device.output)
     # finalizer(close, this)
-    input_parameters = make_parameters(Sample, input_channels_filled, input_device, latency)
-    output_parameters = make_parameters(Sample, output_channels_filled, output_device, latency)
+    input_parameters = make_parameters(input_portal, latency)
+    output_parameters = make_parameters(output_portal, latency)
     stream_pointer = Pa_OpenStream(
         input_parameters,
         output_parameters,
@@ -262,59 +271,18 @@ function PortAudioStream(
     Pa_StartStream(stream_pointer)
     # pre-fill the output stream so we're less likely to underrun
     stream = PortAudioStream(
-        the_sample_rate,
-        latency,
+        input_portal,
+        output_portal,
         stream_pointer,
-        warn_xruns,
-        recover_xruns,
-        Portal(output_device, output_channels; Sample = Sample),
-        Portal(input_device, input_channels; Sample = Sample),
+        the_sample_rate,
+        latency
     )
-    prefill_output(stream)
-    stream
-end
-
-function get_device(device::PortAudioDevice)
-    device
-end
-
-function get_device(device_name::AbstractString)
-    for device in devices()
-        if device.name == device_name
-            return device
-        end
-    end
-    if device === nothing
-        error(
-            "No device matching \"$device_name\" found.\nAvailable Devices:\n$(device_names())",
-        )
-    end
-end
-
-function get_device(index::Integer)
-    PortAudioDevice(Pa_GetDeviceInfo(index), index)
-end
-
-# handle device names given as streams
-function PortAudioStream(input_device_id, output_device_id; keyword_arguments...)
-    PortAudioStream(
-        get_device(input_device_id),
-        get_device(output_device_id);
-        keyword_arguments...,
-    )
-end
-
-# if one device is given, use it for input and output, but set input_channels=0 so we
-# end up with an output-only stream
-function PortAudioStream(device; keyword_arguments...)
-    PortAudioStream(device, device; input_channels = 0, keyword_arguments...)
 end
 
 # use the default input and output devices
 function PortAudioStream(; keyword_arguments...)
     PortAudioStream(
-        Pa_GetDefaultInputDevice(),
-        Pa_GetDefaultOutputDevice();
+        
         keyword_arguments...,
     )
 end
