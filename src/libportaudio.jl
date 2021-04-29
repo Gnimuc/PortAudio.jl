@@ -10,14 +10,11 @@ const PaHostApiTypeId = Cint
 # PaStream is always used as an opaque type, so we're always dealing
 # with the pointer
 const PaStream = Ptr{Cvoid}
-const PaStreamCallback = Cvoid
 const PaStreamFlags = Culong
 
-const PA_NO_FLAG = PaStreamFlags(0x00)
-
-const PA_NO_ERROR = 0
-const PA_INPUT_OVERFLOWED = -10000 + 19
-const PA_OUTPUT_UNDERFLOWED = -10000 + 20
+const PaStreamCallback = Cvoid
+const PaStreamCallbackResult = Cint
+const PaStreamCallbackFlags = Culong
 
 const TYPE_TO_FORMAT = Dict{Type,PaSampleFormat}(
     Float32 => 1,
@@ -29,10 +26,62 @@ const TYPE_TO_FORMAT = Dict{Type,PaSampleFormat}(
     # NonInterleaved => 2^31
 )
 
-const PaStreamCallbackResult = Cint
+# enums and flags
+@bitflag(StreamFlags,
+    paNoFlag = 0,
+    paClipOff,
+    paDitherOff,
+    paNeverDropInput,
+    paPrimeOutputBuffersUsingStreamCallback
+)
 
-# Callback return values
-@enum CallBackResult paContinue = 0 paComplete = 1 paAbort = 2
+@enum(ErrorCode,
+    paNoError = 0,
+    paNotInitialized = -10000,
+    paUnanticipatedHostError,
+    paInvalidChannelCount,
+    paInvalidSampleRate,
+    paInvalidDevice,
+    paInvalidFlag,
+    paSampleFormatNotSupported,
+    paBadIODeviceCombination,
+    paInsufficientMemory,
+    paBufferTooBig,
+    paBufferTooSmall,
+    paNullCallback,
+    paBadStreamPtr,
+    paTimedOut,
+    paInternalError,
+    paDeviceUnavailable,
+    paIncompatibleHostApiSpecificStreamInfo,
+    paStreamIsStopped,
+    paStreamIsNotStopped,
+    paInputOverflowed,
+    paOutputUnderflowed,
+    paHostApiNotFound,
+    paInvalidHostApi,
+    paCanNotReadFromACallbackStream,
+    paCanNotWriteToACallbackStream,
+    paCanNotReadFromAnOutputOnlyStream,
+    paCanNotWriteToAnInputOnlyStream,
+    paIncompatibleStreamHostApi,
+    paBadBufferPtr
+)
+
+@enum(CallbackResult,
+    paContinue = 0,
+    paComplete,
+    paAbort
+)
+@bitflag(CallbackFlags,
+    paInputUnderflow,
+    paInputOverflow,
+    paOutputUnderflow,
+    paOutputOverflow,
+    paPrimingOutput
+)
+
+
 
 # because we're calling Pa_ReadStream and PA_WriteStream from separate threads,
 # we put a mutex around libportaudio calls
@@ -155,6 +204,13 @@ mutable struct PaStreamInfo
     the_sample_rate::Cdouble
 end
 
+mutable struct PaStreamCallbackTimeInfo
+    current_time::PaTime
+    input_buffer_analog_to_digital_time::PaTime
+    output_buffer_digital_to_analog_time::PaTime
+end
+
+
 # function Pa_OpenDefaultStream(input_channels, output_channels,
 #                               sample_format::PaSampleFormat,
 #                               the_sample_rate, frames_per_buffer)
@@ -178,9 +234,9 @@ function Pa_OpenStream(
     output_parameters,
     the_sample_rate,
     frames_per_buffer,
-    flags::PaStreamFlags,
-    callback,
-    userdata,
+    flags,
+    callback_pointer,
+    userdata_ref,
 )
     stream_pointer = Ref{PaStream}(0)
     handle_status(
@@ -192,8 +248,8 @@ function Pa_OpenStream(
                 float(the_sample_rate)::Cdouble,
                 frames_per_buffer::Culong,
                 flags::PaStreamFlags,
-                (callback === nothing ? C_NULL : callback)::Ref{Cvoid},
-                (userdata === nothing ? C_NULL : pointer_from_objref(userdata))::Ptr{Cvoid},
+                callback_pointer::Ptr{Cvoid},
+                userdata_ref::Ptr{Cvoid}
             )::PaError
         end,
     )
@@ -218,66 +274,14 @@ function Pa_CloseStream(stream::PaStream)
     end)
 end
 
-function Pa_GetStreamReadAvailable(stream::PaStream)
-    available = lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_GetStreamReadAvailable(stream::PaStream)::Clong
-    end
-    available >= 0 || handle_status(available)
-    available
-end
-
-function Pa_GetStreamWriteAvailable(stream::PaStream)
-    available = lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_GetStreamWriteAvailable(stream::PaStream)::Clong
-    end
-    available >= 0 || handle_status(available)
-    available
-end
-
-function Pa_ReadStream(stream::PaStream, buf::Array, frames::Integer, show_warnings = true)
-    # without disable_sigint I get a segfault with the error:
-    # "error thrown and no exception handler available."
-    # if the user tries to ctrl-C. Note I've still had some crash problems with
-    # ctrl-C within `pasuspend`, so for now I think either don't use `pasuspend` or
-    # don't use ctrl-C.
-    error_code = disable_sigint() do
-        fetch(
-            @spawn lock(PA_MUTEX) do
-                @ccall libportaudio.Pa_ReadStream(
-                    stream::PaStream,
-                    buf::Ptr{Cvoid},
-                    frames::Culong,
-                )::PaError
-            end
-        )
-    end
-    handle_status(error_code, show_warnings)
-    error_code
-end
-
-function Pa_WriteStream(stream::PaStream, buf::Array, frames::Integer, show_warnings = true)
-    error_code = disable_sigint() do
-        fetch(
-            @spawn lock(PA_MUTEX) do
-                @ccall libportaudio.Pa_WriteStream(
-                    stream::PaStream,
-                    buf::Ptr{Cvoid},
-                    frames::Culong,
-                )::PaError
-            end
-        )
-    end
-    handle_status(error_code, show_warnings)
-    error_code
-end
-
 # function Pa_GetStreamInfo(stream::PaStream)
 #     unsafe_load(@ccall libportaudio.Pa_GetStreamInfo(stream::PaStream)::Ptr{PaStreamInfo})
 # end
 #
 # General utility function to handle the status from the Pa_* functions
-function handle_status(error_code::PaError, show_warnings::Bool = true)
-    if error_code == PA_OUTPUT_UNDERFLOWED || error_code == PA_INPUT_OVERFLOWED
+function handle_status(error_id::PaError, show_warnings::Bool = true)
+    error_code = ErrorCode(error_id)
+    if error_code == paInputOverflowed || error_code == paOutputUnderflowed
         if show_warnings
             @warn(
                 "libportaudio: " * unsafe_string(
@@ -289,7 +293,7 @@ function handle_status(error_code::PaError, show_warnings::Bool = true)
                 )
             )
         end
-    elseif error_code != PA_NO_ERROR
+    elseif error_code != paNoError
         throw(
             ErrorException(
                 "libportaudio: " * unsafe_string(
@@ -302,4 +306,5 @@ function handle_status(error_code::PaError, show_warnings::Bool = true)
             ),
         )
     end
+    nothing
 end

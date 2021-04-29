@@ -4,6 +4,10 @@
 
 include("runtests.jl")
 
+PortAudioStream(input(), output()) do input_buffer, output_buffer, framecount, time_info, callback_flags, userdata
+    return paComplete
+end
+
 # these default values are specific to my machines
 if Sys.iswindows()
     default_indev = "Microphone Array (Realtek High "

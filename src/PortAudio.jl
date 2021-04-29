@@ -1,21 +1,15 @@
 module PortAudio
 
-using alsa_plugins_jll
-using libportaudio_jll, SampledSignals
+using alsa_plugins_jll: alsa_plugins_jll
+using libportaudio_jll: libportaudio
+using BitFlags: @bitflag
 
-import Base: eltype, show
-import Base: close, isopen
-import Base: read, read!, write, flush
+import Base: close, eltype, isopen, show
 
 using Base.Threads: @spawn
 using Base.Sys: islinux, iswindows
 
-import LinearAlgebra
-import LinearAlgebra: transpose!
-
-import SampledSignals: nchannels, samplerate, unsafe_read!, unsafe_write
-
-export PortAudioStream
+export PortAudioStream, input, output
 
 include("libportaudio.jl")
 
@@ -120,23 +114,22 @@ end
 # not for external use, used in error message printing
 device_names() = join(["\"$(device.name)\"" for device in devices()], "\n")
 
-struct Portal{Sample}
+struct Portal
     device::PortAudioDevice
     number_of_channels::Int
-    chunk_buffer::Array{Sample,2}
 end
 
-function Portal(device, device_IO;
-    number_of_channels = 2,
-    Sample = Float32
+function Portal(device, device_IO::PortAudioDeviceIO;
+    number_of_channels = 2
 )
-    number_of_channels_filled = 
+    Portal(
+        device, 
         if number_of_channels === max
             device_IO.max_channels
         else
             number_of_channels
         end
-    Portal{Sample}(device, number_of_channels_filled, zeros(Sample, number_of_channels_filled, CHUNK_FRAMES))
+    )
 end
 
 function input(;
@@ -155,10 +148,6 @@ function output(;
     Portal(device, device.output; keyword_arguments...)
 end
 
-function eltype(::Type{Portal{Sample}}) where {Sample}
-    Sample
-end
-
 function nchannels(portal::Portal)
     portal.number_of_channels
 end
@@ -167,14 +156,14 @@ function name(portal::Portal)
 end
 
 mutable struct PortAudioStream{Sample}
-    input_portal::Portal{Sample}
-    output_portal::Portal{Sample}
+    input_portal::Portal
+    output_portal::Portal
     stream_pointer::PaStream
     the_sample_rate::Float64
     latency::Float64
 end
 
-function make_parameters(portal, latency)
+function make_parameters(Sample, portal, latency)
     if portal === nothing
         Ptr{Pa_StreamParameters}(0)
     else
@@ -182,7 +171,7 @@ function make_parameters(portal, latency)
             Pa_StreamParameters(
                 portal.device.index,
                 portal.number_of_channels,
-                TYPE_TO_FORMAT[eltype(portal)],
+                TYPE_TO_FORMAT[Sample],
                 latency,
                 C_NULL,
             ),
@@ -192,11 +181,11 @@ end
 
 function get_default_latency(input_portal, output_portal)
     if input_portal === nothing
-        output_device.output.high_latency
+        output_portal.device.output.high_latency
     elseif output_portal === nothing
-        input_device.input.high_latency
+        input_portal.device.input.high_latency
     else
-        max(input_device.input.high_latency, output_device.output.high_latency)
+        max(input_portal.device.input.high_latency, output_portal.device.output.high_latency)
     end
 end
 
@@ -222,6 +211,41 @@ function get_default_sample_rate(
             sample_rate_input
         end
     end
+end
+
+function wrap_callback(callback, ::Type{UserData}, ::Type{Sample}) where {UserData, Sample}
+    @cfunction(
+        function (
+            input_buffer_pointer, 
+            output_buffer_pointer, 
+            framecount,
+            time_info_pointer,
+            status_flags,
+            user_data_pointer
+        )
+            PaStreamCallbackResult(callback(
+                unsafe_wrap(Array, input_buffer_pointer, 2),
+                unsafe_wrap(Array, output_buffer_pointer, 2),
+                framecount,
+                unsafe_pointer_to_objref(time_info_pointer),
+                StreamCallbackFlags(status_flags),
+                if user_data_pointer === C_NULL
+                    nothing
+                else
+                    unsafe_pointer_to_objref(user_data_pointer)
+                end
+            ))
+        end,
+        PaStreamCallbackResult, # returns
+        (
+            Ptr{Sample}, # input buffer pointer
+            Ptr{Sample}, # output buffer pointer
+            Culong, # framecount
+            Ptr{PaStreamCallbackTimeInfo}, # time info pointer
+            PaStreamCallbackFlags, # status flags
+            Ptr{UserData}, # userdata pointer
+        )
+    )
 end
 
 # this is the top-level outer constructor that all the other outer constructors end up calling
@@ -250,43 +274,33 @@ Options:
                     fewer xruns but could make each xrun more audible. True by default.
                     Only effects duplex streams.
 """
-function PortAudioStream(
-    input_portal,
-    output_portal;
+function PortAudioStream(callback, input_portal, output_portal;
+    Sample = Float32,
     the_sample_rate = get_default_sample_rate(input_portal, output_portal),
-    latency = get_default_latency(input_portal, output_portal)
+    latency = get_default_latency(input_portal, output_portal),
+    userdata = nothing
 )
     # finalizer(close, this)
-    input_parameters = make_parameters(input_portal, latency)
-    output_parameters = make_parameters(output_portal, latency)
+    input_parameters = make_parameters(Sample, input_portal, latency)
+    output_parameters = make_parameters(Sample, output_portal, latency)
     stream_pointer = Pa_OpenStream(
         input_parameters,
         output_parameters,
         the_sample_rate,
         0,
-        PA_NO_FLAG,
-        nothing,
-        nothing,
+        paNoFlag,
+        wrap_callback(callback, Sample, typeof(userdata)),
+        Ref(userdata),
     )
     Pa_StartStream(stream_pointer)
     # pre-fill the output stream so we're less likely to underrun
-    stream = PortAudioStream(
+    stream = PortAudioStream{Sample}(
         input_portal,
         output_portal,
         stream_pointer,
         the_sample_rate,
         latency
     )
-end
-
-# handle do-syntax
-function PortAudioStream(do_function::Function, arguments...; keyword_arguments...)
-    stream = PortAudioStream(arguments...; keyword_arguments...)
-    try
-        do_function(stream)
-    finally
-        close(stream)
-    end
 end
 
 function close(stream::PortAudioStream)
@@ -303,7 +317,7 @@ end
 isopen(stream::PortAudioStream) = stream.stream_pointer != C_NULL
 
 samplerate(stream::PortAudioStream) = stream.the_sample_rate
-eltype(::PortAudioStream{Sample}) where {Sample} = Sample
+eltype(::Type{PortAudioStream{Sample}}) where {Sample} = Sample
 
 function show(io::IO, stream::PortAudioStream)
     println(io, typeof(stream))
