@@ -56,6 +56,10 @@ PortAudioDevice(info::PaDeviceInfo, index) = PortAudioDevice(
     ),
 )
 
+function name(device::PortAudioDevice)
+    device.name
+end
+
 
 function get_device(device::PortAudioDevice)
     device
@@ -63,7 +67,7 @@ end
 
 function get_device(device_name::AbstractString)
     for device in devices()
-        if device.name == device_name
+        if name(device) == device_name
             return device
         end
     end
@@ -82,7 +86,7 @@ function show(io::IO, device::PortAudioDevice)
     print(io, 
         device.index,
         ": ",
-        device.name
+        name(device)
     )
     max_input_channels = device.input.max_channels
     has_inputs = max_input_channels > 0
@@ -112,7 +116,7 @@ function devices()
 end
 
 # not for external use, used in error message printing
-device_names() = join(["\"$(device.name)\"" for device in devices()], "\n")
+device_names() = join(["\"$(name(device))\"" for device in devices()], "\n")
 
 struct Portal
     device::PortAudioDevice
@@ -151,8 +155,9 @@ end
 function nchannels(portal::Portal)
     portal.number_of_channels
 end
+
 function name(portal::Portal)
-    portal.device.name
+    name(portal.device)
 end
 
 mutable struct PortAudioStream{Sample}
@@ -163,14 +168,18 @@ mutable struct PortAudioStream{Sample}
     latency::Float64
 end
 
+function samplerate(stream::PortAudioStream)
+    stream.the_sample_rate
+end
+
 function make_parameters(Sample, portal, latency)
     if portal === nothing
-        Ptr{Pa_StreamParameters}(0)
+        C_NULL
     else
         Ref(
             Pa_StreamParameters(
                 portal.device.index,
-                portal.number_of_channels,
+                nchannels(portal),
                 TYPE_TO_FORMAT[Sample],
                 latency,
                 C_NULL,
@@ -201,12 +210,7 @@ function get_default_sample_rate(
         sample_rate_input = input_portal.device.default_sample_rate
         sample_rate_output = output_portal.device.default_sample_rate
         if sample_rate_input != sample_rate_output
-            error(
-                """
-          Can't open duplex stream with mismatched samplerates (in: $sample_rate_input, out: $sample_rate_output).
-                  Try changing your sample rate in your driver settings or open separate input and output
-                  streams""",
-            )
+            error("Input and output devices differ in default sample rate. Pass an explicit sample rate to PortAudioStream")
         else
             sample_rate_input
         end
@@ -278,7 +282,9 @@ function PortAudioStream(callback, input_portal, output_portal;
     Sample = Float32,
     the_sample_rate = get_default_sample_rate(input_portal, output_portal),
     latency = get_default_latency(input_portal, output_portal),
-    userdata = nothing
+    userdata = nothing,
+    frames_per_buffer = paFramesPerBufferUnspecified,
+    flag = paNoFlag
 )
     # finalizer(close, this)
     input_parameters = make_parameters(Sample, input_portal, latency)
@@ -287,14 +293,16 @@ function PortAudioStream(callback, input_portal, output_portal;
         input_parameters,
         output_parameters,
         the_sample_rate,
-        0,
-        paNoFlag,
+        frames_per_buffer,
+        flag,
         wrap_callback(callback, Sample, typeof(userdata)),
         Ref(userdata),
     )
+    println("opened")
     Pa_StartStream(stream_pointer)
+    println("started")
     # pre-fill the output stream so we're less likely to underrun
-    stream = PortAudioStream{Sample}(
+    PortAudioStream{Sample}(
         input_portal,
         output_portal,
         stream_pointer,
@@ -315,8 +323,6 @@ function close(stream::PortAudioStream)
 end
 
 isopen(stream::PortAudioStream) = stream.stream_pointer != C_NULL
-
-samplerate(stream::PortAudioStream) = stream.the_sample_rate
 eltype(::Type{PortAudioStream{Sample}}) where {Sample} = Sample
 
 function show(io::IO, stream::PortAudioStream)

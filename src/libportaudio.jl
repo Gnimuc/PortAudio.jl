@@ -16,6 +16,8 @@ const PaStreamCallback = Cvoid
 const PaStreamCallbackResult = Cint
 const PaStreamCallbackFlags = Culong
 
+const paFramesPerBufferUnspecified = 0
+
 const TYPE_TO_FORMAT = Dict{Type,PaSampleFormat}(
     Float32 => 1,
     Int32 => 2,
@@ -147,7 +149,11 @@ end
 
 Pa_GetHostApiInfo(index) = unsafe_load(
     lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_GetHostApiInfo(index::PaHostApiIndex)::Ptr{PaHostApiInfo}
+        result = @ccall libportaudio.Pa_GetHostApiInfo(index::PaHostApiIndex)::Ptr{PaHostApiInfo}
+        if result == C_NULL
+            error("Host api doesn't exist")
+        end
+        result
     end,
 )
 
@@ -173,7 +179,11 @@ Pa_GetDeviceCount() =
 
 Pa_GetDeviceInfo(index) = unsafe_load(
     lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_GetDeviceInfo(index::PaDeviceIndex)::Ptr{PaDeviceInfo}
+        result = @ccall libportaudio.Pa_GetDeviceInfo(index::PaDeviceIndex)::Ptr{PaDeviceInfo}
+        if result == C_NULL
+            error("Device doesn't exist")
+        end
+        result
     end,
 )
 
@@ -195,13 +205,6 @@ mutable struct Pa_StreamParameters
     sample_format::PaSampleFormat
     suggested_latency::PaTime
     host_API_specific_stream_info::Ptr{Cvoid}
-end
-
-mutable struct PaStreamInfo
-    struct_version::Cint
-    input_latency::PaTime
-    output_latency::PaTime
-    the_sample_rate::Cdouble
 end
 
 mutable struct PaStreamCallbackTimeInfo
@@ -274,26 +277,30 @@ function Pa_CloseStream(stream::PaStream)
     end)
 end
 
-# function Pa_GetStreamInfo(stream::PaStream)
-#     unsafe_load(@ccall libportaudio.Pa_GetStreamInfo(stream::PaStream)::Ptr{PaStreamInfo})
+# mutable struct PaStreamInfo
+#     struct_version::Cint
+#     input_latency::PaTime
+#     output_latency::PaTime
+#     the_sample_rate::Cdouble
 # end
-#
+# 
+# function Pa_GetStreamInfo(stream::PaStream)
+#     unsafe_load(
+#         result = @ccall libportaudio.Pa_GetStreamInfo(stream::PaStream)::Ptr{PaStreamInfo}
+#         if result == C_NULL
+#             error("Stream doesn't exist")
+#         end
+#         result
+#     )
+# end
+
 # General utility function to handle the status from the Pa_* functions
-function handle_status(error_id::PaError, show_warnings::Bool = true)
-    error_code = ErrorCode(error_id)
-    if error_code == paInputOverflowed || error_code == paOutputUnderflowed
-        if show_warnings
-            @warn(
-                "libportaudio: " * unsafe_string(
-                    lock(PA_MUTEX) do
-                        @ccall libportaudio.Pa_GetErrorText(
-                            error_code::PaError,
-                        )::Ptr{Cchar}
-                    end,
-                )
-            )
-        end
-    elseif error_code != paNoError
+function handle_status(error_id::Integer)
+    handle_status(ErrorCode(error_id))
+end
+
+function handle_status(error_code)
+    if error_code != paNoError
         throw(
             ErrorException(
                 "libportaudio: " * unsafe_string(
