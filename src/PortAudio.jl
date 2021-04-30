@@ -217,29 +217,26 @@ function get_default_sample_rate(
     end
 end
 
-function wrap_callback(callback, ::Type{UserData}, ::Type{Sample}) where {UserData, Sample}
+function run_true_callback(
+    input_buffer_pointer, 
+    output_buffer_pointer, 
+    framecount,
+    time_info_pointer,
+    status_flags,
+    user_data_pointer
+)
+    PaStreamCallbackResult((unsafe_pointer_to_objref(user_data_pointer)::Function)(
+        unsafe_wrap(Array, input_buffer_pointer, 2),
+        unsafe_wrap(Array, output_buffer_pointer, 2),
+        framecount,
+        unsafe_pointer_to_objref(time_info_pointer),
+        StreamCallbackFlags(status_flags),
+    ))
+end
+
+function make_dummy_callback(::Type{Sample}) where {Sample}
     @cfunction(
-        function (
-            input_buffer_pointer, 
-            output_buffer_pointer, 
-            framecount,
-            time_info_pointer,
-            status_flags,
-            user_data_pointer
-        )
-            PaStreamCallbackResult(callback(
-                unsafe_wrap(Array, input_buffer_pointer, 2),
-                unsafe_wrap(Array, output_buffer_pointer, 2),
-                framecount,
-                unsafe_pointer_to_objref(time_info_pointer),
-                StreamCallbackFlags(status_flags),
-                if user_data_pointer === C_NULL
-                    nothing
-                else
-                    unsafe_pointer_to_objref(user_data_pointer)
-                end
-            ))
-        end,
+        run_true_callback,
         PaStreamCallbackResult, # returns
         (
             Ptr{Sample}, # input buffer pointer
@@ -247,7 +244,7 @@ function wrap_callback(callback, ::Type{UserData}, ::Type{Sample}) where {UserDa
             Culong, # framecount
             Ptr{PaStreamCallbackTimeInfo}, # time info pointer
             PaStreamCallbackFlags, # status flags
-            Ptr{UserData}, # userdata pointer
+            Ptr{Nothing}
         )
     )
 end
@@ -295,8 +292,8 @@ function PortAudioStream(callback, input_portal, output_portal;
         the_sample_rate,
         frames_per_buffer,
         flag,
-        wrap_callback(callback, Sample, typeof(userdata)),
-        Ref(userdata),
+        make_dummy_callback(Sample),
+        Ref(callback),
     )
     println("opened")
     Pa_StartStream(stream_pointer)

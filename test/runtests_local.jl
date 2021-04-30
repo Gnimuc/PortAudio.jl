@@ -6,7 +6,7 @@ include("runtests.jl")
 
 using PortAudio
 
-PortAudioStream(input(), output()) do input_buffer, output_buffer, framecount, time_info, callback_flags, userdata
+PortAudioStream(input(), output()) do input_buffer, output_buffer, framecount, time_info, callback_flags
     return paComplete
 end
 
