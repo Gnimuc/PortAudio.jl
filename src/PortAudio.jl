@@ -218,7 +218,7 @@ function get_default_sample_rate(
 end
 
 # return a new function that will unwrap pointer arguments and then run callback
-function call_unwrap(callback)
+function call_unwrap(callback, Sample, input_channels, output_channels)
     function (
         input_buffer_pointer,
         output_buffer_pointer,
@@ -227,8 +227,8 @@ function call_unwrap(callback)
         status_flags
     )
         callback(
-            unsafe_wrap(Array, input_buffer_pointer, (2, framecount)),
-            unsafe_wrap(Array, output_buffer_pointer, (2, framecount)),
+            unsafe_wrap(Array, convert(Ptr{Sample}, input_buffer_pointer), (input_channels, framecount)),
+            unsafe_wrap(Array, convert(Ptr{Sample}, output_buffer_pointer), (output_channels, framecount)),
             framecount,
             unsafe_pointer_to_objref(time_info_pointer),
             StreamCallbackFlags(status_flags)
@@ -255,20 +255,19 @@ function run_true_callback(
 end
 
 # this cfunction is as minimal as possible; most of the processing will be done by the true callback
-function make_dummy_callback(::Type{Sample}) where {Sample}
+const DUMMY_CALLBACK =
     @cfunction(
         run_true_callback,
         PaStreamCallbackResult, # returns
         (
-            Ptr{Sample}, # input buffer pointer
-            Ptr{Sample}, # output buffer pointer
+            Ptr{Cvoid}, # input buffer pointer
+            Ptr{Cvoid}, # output buffer pointer
             Culong, # framecount
             Ptr{PaStreamCallbackTimeInfo}, # time info pointer
             PaStreamCallbackFlags, # status flags
             Ptr{Nothing}
         )
     )
-end
 
 # this is the top-level outer constructor that all the other outer constructors end up calling
 """
@@ -314,8 +313,8 @@ function PortAudioStream(callback, input_portal, output_portal;
         the_sample_rate,
         frames_per_buffer,
         flag,
-        make_dummy_callback(Sample),
-        Ref(call_unwrap(callback)),
+        DUMMY_CALLBACK,
+        Ref(call_unwrap(callback, Sample, nchannels(input_portal), nchannels(output_portal))),
     )
     Pa_StartStream(stream_pointer)
     # pre-fill the output stream so we're less likely to underrun
