@@ -217,23 +217,44 @@ function get_default_sample_rate(
     end
 end
 
+# return a new function that will unwrap pointer arguments and then run callback
+function call_unwrap(callback)
+    function (
+        input_buffer_pointer,
+        output_buffer_pointer,
+        framecount,
+        time_info_pointer,
+        status_flags
+    )
+        callback(
+            unsafe_wrap(Array, input_buffer_pointer, (2, framecount)),
+            unsafe_wrap(Array, output_buffer_pointer, (2, framecount)),
+            framecount,
+            unsafe_pointer_to_objref(time_info_pointer),
+            StreamCallbackFlags(status_flags)
+        )
+    end
+end
+
+# unwrap the pass-through, and then call it on the pointer arguments
 function run_true_callback(
     input_buffer_pointer, 
     output_buffer_pointer, 
     framecount,
     time_info_pointer,
     status_flags,
-    user_data_pointer
+    pass_through_pointer
 )
-    PaStreamCallbackResult((unsafe_pointer_to_objref(user_data_pointer)::Function)(
-        unsafe_wrap(Array, input_buffer_pointer, 2),
-        unsafe_wrap(Array, output_buffer_pointer, 2),
+    PaStreamCallbackResult(unsafe_pointer_to_objref(pass_through_pointer)::Function)(
+        input_buffer_pointer, 
+        output_buffer_pointer, 
         framecount,
-        unsafe_pointer_to_objref(time_info_pointer),
-        StreamCallbackFlags(status_flags),
-    ))
+        time_info_pointer,
+        status_flags
+    )
 end
 
+# this cfunction is as minimal as possible; most of the processing will be done by the true callback
 function make_dummy_callback(::Type{Sample}) where {Sample}
     @cfunction(
         run_true_callback,
@@ -283,9 +304,10 @@ function PortAudioStream(callback, input_portal, output_portal;
     frames_per_buffer = paFramesPerBufferUnspecified,
     flag = paNoFlag
 )
-    # finalizer(close, this)
     input_parameters = make_parameters(Sample, input_portal, latency)
     output_parameters = make_parameters(Sample, output_portal, latency)
+    # check that the parameters are supported
+    Pa_IsFormatSupported(input_parameters, output_parameters, the_sample_rate)
     stream_pointer = Pa_OpenStream(
         input_parameters,
         output_parameters,
@@ -293,11 +315,9 @@ function PortAudioStream(callback, input_portal, output_portal;
         frames_per_buffer,
         flag,
         make_dummy_callback(Sample),
-        Ref(callback),
+        Ref(call_unwrap(callback)),
     )
-    println("opened")
     Pa_StartStream(stream_pointer)
-    println("started")
     # pre-fill the output stream so we're less likely to underrun
     PortAudioStream{Sample}(
         input_portal,
@@ -325,15 +345,15 @@ eltype(::Type{PortAudioStream{Sample}}) where {Sample} = Sample
 function show(io::IO, stream::PortAudioStream)
     println(io, typeof(stream))
     println(io, "  Samplerate: ", samplerate(stream), "Hz")
-    sink_portal = stream.sink_portal
-    sink_channels = nchannels(sink_portal)
+    output_portal = stream.output_portal
+    sink_channels = nchannels(output_portal)
     if sink_channels > 0
-        print(io, "\n  ", sink_channels, " channel sink: \"", name(sink_portal), "\"")
+        print(io, "\n  ", sink_channels, " channel sink: \"", name(output_portal), "\"")
     end
-    source_portal = stream.source_portal
-    source_channels = nchannels(source_portal)
+    input_portal = stream.input_portal
+    source_channels = nchannels(input_portal)
     if source_channels > 0
-        print(io, "\n  ", source_channels, " channel source: \"", name(source_portal), "\"")
+        print(io, "\n  ", source_channels, " channel source: \"", name(input_portal), "\"")
     end
 end
 

@@ -277,6 +277,16 @@ function Pa_CloseStream(stream::PaStream)
     end)
 end
 
+function Pa_IsFormatSupported(input_parameters, output_parameters, the_sample_rate)
+    handle_status(lock(PA_MUTEX) do 
+        @ccall libportaudio.Pa_IsFormatSupported(
+            input_parameters::Ref{Pa_StreamParameters}, 
+            output_parameters::Ref{Pa_StreamParameters}, 
+            float(the_sample_rate)::Cdouble
+        )::PaError
+    end)
+end
+
 # mutable struct PaStreamInfo
 #     struct_version::Cint
 #     input_latency::PaTime
