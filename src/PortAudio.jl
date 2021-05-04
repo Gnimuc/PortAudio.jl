@@ -226,13 +226,13 @@ function call_unwrap(callback, Sample, input_channels, output_channels)
         time_info_pointer,
         status_flags
     )
-        callback(
+        PaStreamCallbackResult(callback(
             unsafe_wrap(Array, convert(Ptr{Sample}, input_buffer_pointer), (input_channels, framecount)),
             unsafe_wrap(Array, convert(Ptr{Sample}, output_buffer_pointer), (output_channels, framecount)),
             framecount,
             unsafe_pointer_to_objref(time_info_pointer),
             StreamCallbackFlags(status_flags)
-        )
+        ))
     end
 end
 
