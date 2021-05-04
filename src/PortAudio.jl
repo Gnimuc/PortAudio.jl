@@ -265,7 +265,7 @@ const DUMMY_CALLBACK =
             Culong, # framecount
             Ptr{PaStreamCallbackTimeInfo}, # time info pointer
             PaStreamCallbackFlags, # status flags
-            Ptr{Nothing}
+            Ptr{Cvoid}
         )
     )
 
