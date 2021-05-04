@@ -299,7 +299,6 @@ function PortAudioStream(callback, input_portal, output_portal;
     Sample = Float32,
     the_sample_rate = get_default_sample_rate(input_portal, output_portal),
     latency = get_default_latency(input_portal, output_portal),
-    userdata = nothing,
     frames_per_buffer = paFramesPerBufferUnspecified,
     flag = paNoFlag
 )
