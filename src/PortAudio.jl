@@ -30,7 +30,7 @@ function versioninfo(io::IO = stdout)
     println(io, "Version: ", Pa_GetVersion())
 end
 
-struct PortAudioDeviceIO
+struct IOBounds
     max_channels::Int
     low_latency::Float64
     high_latency::Float64
@@ -41,8 +41,8 @@ mutable struct PortAudioDevice
     host_api::String
     default_sample_rate::Float64
     index::PaDeviceIndex
-    input::PortAudioDeviceIO
-    output::PortAudioDeviceIO
+    input::IOBounds
+    output::IOBounds
 end
 
 PortAudioDevice(info::PaDeviceInfo, index) = PortAudioDevice(
@@ -50,34 +50,28 @@ PortAudioDevice(info::PaDeviceInfo, index) = PortAudioDevice(
     unsafe_string(Pa_GetHostApiInfo(info.host_api).name),
     info.default_sample_rate,
     index,
-    PortAudioDeviceIO(
+    IOBounds(
         info.max_input_channels,
         info.default_low_input_latency,
         info.default_high_input_latency,
     ),
-    PortAudioDeviceIO(
+    IOBounds(
         info.max_output_channels,
         info.default_low_output_latency,
         info.default_high_output_latency,
     ),
 )
 
+function name(device::PortAudioDevice)
+    device.name
+end
 
 function get_device(device::PortAudioDevice)
     device
 end
 
 function get_device(device_name::AbstractString)
-    for device in devices()
-        if device.name == device_name
-            return device
-        end
-    end
-    if device === nothing
-        error(
-            "No device matching \"$device_name\" found.\nAvailable Devices:\n$(device_names())",
-        )
-    end
+    devices[device_name]
 end
 
 function get_device(index::Integer)
@@ -88,7 +82,7 @@ function show(io::IO, device::PortAudioDevice)
     print(io, 
         device.index,
         ": ",
-        device.name
+        name(device)
     )
     max_input_channels = device.input.max_channels
     has_inputs = max_input_channels > 0
@@ -110,15 +104,14 @@ function show(io::IO, device::PortAudioDevice)
 end
 
 function devices()
-    PortAudioDevice[
-        PortAudioDevice(info, index - 1) for (index, info) in enumerate(
-            PaDeviceInfo[Pa_GetDeviceInfo(index) for index = 0:(Pa_GetDeviceCount()-1)],
-        )
-    ]
+    Dict(Iterators.map(
+        function (index)
+            device = PortAudioDevice(Pa_GetDeviceInfo(index), index)
+            name(device) => device
+        end,
+        (1:Pa_GetDeviceCount()) .- 1
+    ))
 end
-
-# not for external use, used in error message printing
-device_names() = join(["\"$(device.name)\"" for device in devices()], "\n")
 
 struct Portal{Sample}
     device::PortAudioDevice
@@ -126,13 +119,13 @@ struct Portal{Sample}
     chunk_buffer::Array{Sample,2}
 end
 
-function Portal(device, device_IO;
+function Portal(device, IO_bounds;
     number_of_channels = 2,
     Sample = Float32
 )
     number_of_channels_filled = 
         if number_of_channels === max
-            device_IO.max_channels
+            IO_bounds.max_channels
         else
             number_of_channels
         end
@@ -163,7 +156,7 @@ function nchannels(portal::Portal)
     portal.number_of_channels
 end
 function name(portal::Portal)
-    portal.device.name
+    name(portal.device)
 end
 
 mutable struct PortAudioStream{Sample}
@@ -192,7 +185,11 @@ end
 
 function get_default_latency(input_portal, output_portal)
     if input_portal === nothing
-        output_device.output.high_latency
+        if output_portal === nothing
+            error("No devices!")
+        else
+            output_device.output.high_latency
+        end
     elseif output_portal === nothing
         input_device.input.high_latency
     else
@@ -205,19 +202,18 @@ function get_default_sample_rate(
     output_portal
 )
     if input_portal === nothing
-        output_portal.device.default_sample_rate
+        if output_portal === nothing
+            error("No devices!")
+        else
+            output_portal.device.default_sample_rate
+        end
     elseif output_portal === nothing
         input_portal.device.default_sample_rate
     else
         sample_rate_input = input_portal.device.default_sample_rate
         sample_rate_output = output_portal.device.default_sample_rate
         if sample_rate_input != sample_rate_output
-            error(
-                """
-          Can't open duplex stream with mismatched samplerates (in: $sample_rate_input, out: $sample_rate_output).
-                  Try changing your sample rate in your driver settings or open separate input and output
-                  streams""",
-            )
+            error("Input and output default sample rates do not match. Plese specify a sample rate.")
         else
             sample_rate_input
         end
@@ -279,14 +275,6 @@ function PortAudioStream(
     )
 end
 
-# use the default input and output devices
-function PortAudioStream(; keyword_arguments...)
-    PortAudioStream(
-        
-        keyword_arguments...,
-    )
-end
-
 # handle do-syntax
 function PortAudioStream(do_function::Function, arguments...; keyword_arguments...)
     stream = PortAudioStream(arguments...; keyword_arguments...)
@@ -304,7 +292,6 @@ function close(stream::PortAudioStream)
         Pa_CloseStream(stream_pointer)
         stream.stream_pointer = C_NULL
     end
-
     nothing
 end
 
@@ -352,7 +339,7 @@ nchannels(sink::PortAudioSink) = nchannels(sink.stream.sink_portal)
 nchannels(source::PortAudioSource) = nchannels(source.stream.source_portal)
 samplerate(sink_or_source::Union{PortAudioSink,PortAudioSource}) =
     samplerate(sink_or_source.stream)
-eltype(::Union{PortAudioSink{Sample},PortAudioSource{Sample}}) where {Sample} = Sample
+eltype(::Union{Type{PortAudioSink{Sample}},Type{PortAudioSource{Sample}}}) where {Sample} = Sample
 function close(sink_or_source::Union{PortAudioSink,PortAudioSource})
     close(sink_or_source.stream)
 end
@@ -361,11 +348,11 @@ name(sink::PortAudioSink) = name(sink.stream.sink_portal)
 name(source::PortAudioSource) = name(source.stream.source_portal)
 
 function show(io::IO, ::Type{PortAudioSink{Sample}}) where {Sample}
-    print(io, "PortAudioSink{$Sample}")
+    print(io, "PortAudioSink{", Sample, "}")
 end
 
 function show(io::IO, ::Type{PortAudioSource{Sample}}) where {Sample}
-    print(io, "PortAudioSource{$Sample}")
+    print(io, "PortAudioSource{", Sample, "{")
 end
 
 function show(

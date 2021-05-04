@@ -15,6 +15,38 @@ const PaStreamFlags = Culong
 
 const PA_NO_FLAG = PaStreamFlags(0x00)
 
+@enum PortAudioError(
+    paNoError = 0,
+    paNotInitialized = -10000,
+    paUnanticipatedHostError,
+    paInvalidChannelCount,
+    paInvalidSampleRate,
+    paInvalidDevice,
+    paInvalidFlag,
+    paSampleFormatNotSupported,
+    paBadIODeviceCombination,
+    paInsufficientMemory,
+    paBufferTooBig,
+    paBufferTooSmall,
+    paNullCallback,
+    paBadStreamPtr,
+    paTimedOut,
+    paInternalError,
+    paDeviceUnavailable,
+    paIncompatibleHostApiSpecificStreamInfo,
+    paStreamIsStopped,
+    paStreamIsNotStopped,
+    paInputOverflowed,
+    paOutputUnderflowed,
+    paHostApiNotFound,
+    paInvalidHostApi,
+    paCanNotReadFromACallbackStream,
+    paCanNotWriteToACallbackStream,
+    paCanNotReadFromAnOutputOnlyStream,
+    paCanNotWriteToAnInputOnlyStream,
+    paIncompatibleStreamHostApi,
+    paBadBufferPtr
+)
 const PA_NO_ERROR = 0
 const PA_INPUT_OVERFLOWED = -10000 + 19
 const PA_OUTPUT_UNDERFLOWED = -10000 + 20
