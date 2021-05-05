@@ -1,6 +1,8 @@
 # This file has runs the normal tests and also adds tests that can only be run
 # locally on a machine with a sound card. It's mostly to put the library through
 # its paces assuming a human is listening.
+using SampledSignals
+using Unitful: s
 
 include("runtests.jl")
 
@@ -26,13 +28,13 @@ end
         println("Playing back recording...")
         stream = PortAudioStream(0, 2)
         write(stream, buf)
-        println("flushing...")
-        flush(stream)
+        # println("flushing...")
+        # flush(stream)
         close(stream)
         println("Testing pass-through")
         stream = PortAudioStream(2, 2)
         write(stream, stream, 5s)
-        flush(stream)
+        # flush(stream)
         close(stream)
         println("done")
     end
@@ -40,7 +42,7 @@ end
         stream = PortAudioStream(0, 2)
         write(stream, SinSource(eltype(stream), samplerate(stream)*0.8, [220, 330]), 3s)
         write(stream, SinSource(eltype(stream), samplerate(stream)*1.2, [220, 330]), 3s)
-        flush(stream)
+        # flush(stream)
         close(stream)
     end
     @testset "Open Device by name" begin
@@ -70,7 +72,7 @@ end
         t2 = @async write(stream, buf)
         @test fetch(t1) == 48000
         @test fetch(t2) == 48000
-        flush(stream)
+        # flush(stream)
         close(stream)
     end
     @testset "Queued Reading" begin
