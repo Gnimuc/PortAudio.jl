@@ -110,10 +110,30 @@ function OpenStream(input_parameters, output_parameters, the_sample_rate, frames
     return stream_ref[]
 end
 
+function simple_callback(input::Ptr{Cvoid}, output::Ptr{Cvoid}, frame_count::Culong,
+    timeInfo::Ptr{PaStreamCallbackTimeInfo}, statusFlags::PaStreamCallbackFlags, userData)::Cint
+    # push!(userData, frame_count)
+    @show "ok"
+    return Cint(paContinue)
+end
+
+function OpenStreamWithCallback(input_parameters, output_parameters,
+    the_sample_rate, frames_per_buffer, flags::PaStreamFlags, callback, userdata)
+    stream_ref = Ref{Ptr{PaStream}}(C_NULL)
+    err = @locked ccall(
+        (:Pa_OpenStream, libportaudio),
+        PaError,
+        (Ptr{Ptr{PaStream}}, Ptr{PaStreamParameters}, Ptr{PaStreamParameters}, Cdouble, Culong, PaStreamFlags, Ptr{Cvoid}, Any),
+        stream_ref, input_parameters, output_parameters, float(the_sample_rate), frames_per_buffer, flags, callback, C_NULL,
+    )
+    handle_status(err)
+    return stream_ref[]
+end
+
 function StartStream(stream::Ptr{PaStream})
     err = @locked Pa_StartStream(stream)
     handle_status(err)
-    return true
+    return err
 end
 
 function StopStream(stream::Ptr{PaStream})

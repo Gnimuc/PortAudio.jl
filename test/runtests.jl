@@ -16,3 +16,7 @@ using Test
         PortAudio.devices()
     end
 end
+
+stream = PortAudioStream(2, 0)
+        buf = read(stream, 5s)
+        close(stream)

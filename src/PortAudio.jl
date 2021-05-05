@@ -96,14 +96,31 @@ mutable struct PortAudioStream{T}
         # finalizer(close, this)
         this.sink = PortAudioSink{T}(outdev.name, this, outchans)
         this.source = PortAudioSource{T}(indev.name, this, inchans)
-        this.stream = suppress_err() do
-            OpenStream(inparams, outparams, sr, 0, paNoFlag,
-                       nothing, nothing)
-        end
 
-        StartStream(this.stream)
-        # pre-fill the output stream so we're less likely to underrun
-        prefill_output(this.sink)
+        # test callback
+        userdata = Culong[]
+        simple_cb = @cfunction(
+            simple_callback, Cint, (Ptr{Cvoid}, Ptr{Cvoid}, Culong,
+            Ptr{PaStreamCallbackTimeInfo}, PaStreamCallbackFlags, Ref{Vector{PaStreamCallbackFlags}})
+        )
+        GC.@preserve userdata begin
+            this.stream = suppress_err() do
+                OpenStreamWithCallback(inparams, outparams, sr, 0, paNoFlag,
+                        simple_cb, userdata)
+            end
+            err = StartStream(this.stream)
+            @show err
+
+            while Pa_IsStreamActive(this.stream) == 1
+                Pa_Sleep(1000)
+                @show userdata
+            end
+
+            # pre-fill the output stream so we're less likely to underrun
+            prefill_output(this.sink)
+
+            @show "anchor 3"
+        end
 
         this
     end
