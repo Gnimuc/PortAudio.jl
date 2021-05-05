@@ -1,327 +1,336 @@
-# Low-level wrappers for Portaudio calls
+module LibPortAudio
 
-# General type aliases
-const PaTime = Cdouble
+using libportaudio_jll
+export libportaudio_jll
+
+function Pa_GetVersion()
+    ccall((:Pa_GetVersion, libportaudio), Cint, ())
+end
+
+function Pa_GetVersionText()
+    ccall((:Pa_GetVersionText, libportaudio), Ptr{Cchar}, ())
+end
+
+mutable struct PaVersionInfo
+    versionMajor::Cint
+    versionMinor::Cint
+    versionSubMinor::Cint
+    versionControlRevision::Ptr{Cchar}
+    versionText::Ptr{Cchar}
+end
+
+# no prototype is found for this function at portaudio.h:114:22, please use with caution
+function Pa_GetVersionInfo()
+    ccall((:Pa_GetVersionInfo, libportaudio), Ptr{PaVersionInfo}, ())
+end
+
 const PaError = Cint
-const PaSampleFormat = Culong
-const PaDeviceIndex = Cint
-const PaHostApiIndex = Cint
-const PaHostApiTypeId = Cint
-# PaStream is always used as an opaque type, so we're always dealing
-# with the pointer
-const PaStream = Ptr{Cvoid}
-const PaStreamFlags = Culong
 
-const PaStreamCallback = Cvoid
-const PaStreamCallbackResult = Cint
-const PaStreamCallbackFlags = Culong
+@enum PaErrorCode::Int32 begin
+    paNoError = 0
+    paNotInitialized = -10000
+    paUnanticipatedHostError = -9999
+    paInvalidChannelCount = -9998
+    paInvalidSampleRate = -9997
+    paInvalidDevice = -9996
+    paInvalidFlag = -9995
+    paSampleFormatNotSupported = -9994
+    paBadIODeviceCombination = -9993
+    paInsufficientMemory = -9992
+    paBufferTooBig = -9991
+    paBufferTooSmall = -9990
+    paNullCallback = -9989
+    paBadStreamPtr = -9988
+    paTimedOut = -9987
+    paInternalError = -9986
+    paDeviceUnavailable = -9985
+    paIncompatibleHostApiSpecificStreamInfo = -9984
+    paStreamIsStopped = -9983
+    paStreamIsNotStopped = -9982
+    paInputOverflowed = -9981
+    paOutputUnderflowed = -9980
+    paHostApiNotFound = -9979
+    paInvalidHostApi = -9978
+    paCanNotReadFromACallbackStream = -9977
+    paCanNotWriteToACallbackStream = -9976
+    paCanNotReadFromAnOutputOnlyStream = -9975
+    paCanNotWriteToAnInputOnlyStream = -9974
+    paIncompatibleStreamHostApi = -9973
+    paBadBufferPtr = -9972
+end
 
-const paFramesPerBufferUnspecified = 0
-
-const TYPE_TO_FORMAT = Dict{Type,PaSampleFormat}(
-    Float32 => 1,
-    Int32 => 2,
-    # Int24   => 4,
-    Int16 => 8,
-    Int8 => 16,
-    UInt8 => 32,
-    # NonInterleaved => 2^31
-)
-
-# enums and flags
-@bitflag(StreamFlags,
-    paNoFlag = 0,
-    paClipOff,
-    paDitherOff,
-    paNeverDropInput,
-    paPrimeOutputBuffersUsingStreamCallback
-)
-
-@enum(ErrorCode,
-    paNoError = 0,
-    paNotInitialized = -10000,
-    paUnanticipatedHostError,
-    paInvalidChannelCount,
-    paInvalidSampleRate,
-    paInvalidDevice,
-    paInvalidFlag,
-    paSampleFormatNotSupported,
-    paBadIODeviceCombination,
-    paInsufficientMemory,
-    paBufferTooBig,
-    paBufferTooSmall,
-    paNullCallback,
-    paBadStreamPtr,
-    paTimedOut,
-    paInternalError,
-    paDeviceUnavailable,
-    paIncompatibleHostApiSpecificStreamInfo,
-    paStreamIsStopped,
-    paStreamIsNotStopped,
-    paInputOverflowed,
-    paOutputUnderflowed,
-    paHostApiNotFound,
-    paInvalidHostApi,
-    paCanNotReadFromACallbackStream,
-    paCanNotWriteToACallbackStream,
-    paCanNotReadFromAnOutputOnlyStream,
-    paCanNotWriteToAnInputOnlyStream,
-    paIncompatibleStreamHostApi,
-    paBadBufferPtr
-)
-
-@enum(CallbackResult,
-    paContinue = 0,
-    paComplete,
-    paAbort
-)
-@bitflag(CallbackFlags,
-    paInputUnderflow,
-    paInputOverflow,
-    paOutputUnderflow,
-    paOutputOverflow,
-    paPrimingOutput
-)
-
-
-
-# because we're calling Pa_ReadStream and PA_WriteStream from separate threads,
-# we put a mutex around libportaudio calls
-const PA_MUTEX = ReentrantLock()
+function Pa_GetErrorText(errorCode)
+    ccall((:Pa_GetErrorText, libportaudio), Ptr{Cchar}, (PaError,), errorCode)
+end
 
 function Pa_Initialize()
-    handle_status(lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_Initialize()::PaError
-    end)
+    ccall((:Pa_Initialize, libportaudio), PaError, ())
 end
 
 function Pa_Terminate()
-    handle_status(lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_Terminate()::PaError
-    end)
+    ccall((:Pa_Terminate, libportaudio), PaError, ())
 end
 
-Pa_GetVersion() =
-    lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_GetVersion()::Cint
-    end
+const PaDeviceIndex = Cint
 
-function Pa_GetVersionText()
-    unsafe_string(lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_GetVersionText()::Ptr{Cchar}
-    end)
+const PaHostApiIndex = Cint
+
+function Pa_GetHostApiCount()
+    ccall((:Pa_GetHostApiCount, libportaudio), PaHostApiIndex, ())
 end
 
-# Host API Functions
+function Pa_GetDefaultHostApi()
+    ccall((:Pa_GetDefaultHostApi, libportaudio), PaHostApiIndex, ())
+end
 
-# A Host API is the top-level of the PortAudio hierarchy. Each host API has a
-# unique type ID that tells you which native backend it is (JACK, ALSA, ASIO,
-# etc.). On a given system you can identify each backend by its index, which
-# will range between 0 and Pa_GetHostApiCount() - 1. You can enumerate through
-# all the host APIs on the system by iterating through those values.
-
-# PaHostApiTypeId values
-const PA_HOST_API_NAMES = Dict{PaHostApiTypeId,String}(
-    0 => "In Development", # use while developing support for a new host API
-    1 => "Direct Sound",
-    2 => "MME",
-    3 => "ASIO",
-    4 => "Sound Manager",
-    5 => "Core Audio",
-    7 => "OSS",
-    8 => "ALSA",
-    9 => "AL",
-    10 => "BeOS",
-    11 => "WDMKS",
-    12 => "Jack",
-    13 => "WASAPI",
-    14 => "AudioScience HPI",
-)
+@enum PaHostApiTypeId::UInt32 begin
+    paInDevelopment = 0
+    paDirectSound = 1
+    paMME = 2
+    paASIO = 3
+    paSoundManager = 4
+    paCoreAudio = 5
+    paOSS = 7
+    paALSA = 8
+    paAL = 9
+    paBeOS = 10
+    paWDMKS = 11
+    paJACK = 12
+    paWASAPI = 13
+    paAudioScienceHPI = 14
+end
 
 mutable struct PaHostApiInfo
-    struct_version::Cint
-    api_type::PaHostApiTypeId
+    structVersion::Cint
+    type::PaHostApiTypeId
     name::Ptr{Cchar}
-    device_count::Cint
-    default_input_device::PaDeviceIndex
-    default_output_device::PaDeviceIndex
+    deviceCount::Cint
+    defaultInputDevice::PaDeviceIndex
+    defaultOutputDevice::PaDeviceIndex
 end
 
-Pa_GetHostApiInfo(index) = unsafe_load(
-    lock(PA_MUTEX) do
-        result = @ccall libportaudio.Pa_GetHostApiInfo(index::PaHostApiIndex)::Ptr{PaHostApiInfo}
-        if result == C_NULL
-            error("Host api doesn't exist")
-        end
-        result
-    end,
-)
+function Pa_GetHostApiInfo(hostApi)
+    ccall((:Pa_GetHostApiInfo, libportaudio), Ptr{PaHostApiInfo}, (PaHostApiIndex,), hostApi)
+end
 
-# Device Functions
+function Pa_HostApiTypeIdToHostApiIndex(type)
+    ccall((:Pa_HostApiTypeIdToHostApiIndex, libportaudio), PaHostApiIndex, (PaHostApiTypeId,), type)
+end
+
+function Pa_HostApiDeviceIndexToDeviceIndex(hostApi, hostApiDeviceIndex)
+    ccall((:Pa_HostApiDeviceIndexToDeviceIndex, libportaudio), PaDeviceIndex, (PaHostApiIndex, Cint), hostApi, hostApiDeviceIndex)
+end
+
+mutable struct PaHostErrorInfo
+    hostApiType::PaHostApiTypeId
+    errorCode::Clong
+    errorText::Ptr{Cchar}
+end
+
+function Pa_GetLastHostErrorInfo()
+    ccall((:Pa_GetLastHostErrorInfo, libportaudio), Ptr{PaHostErrorInfo}, ())
+end
+
+function Pa_GetDeviceCount()
+    ccall((:Pa_GetDeviceCount, libportaudio), PaDeviceIndex, ())
+end
+
+function Pa_GetDefaultInputDevice()
+    ccall((:Pa_GetDefaultInputDevice, libportaudio), PaDeviceIndex, ())
+end
+
+function Pa_GetDefaultOutputDevice()
+    ccall((:Pa_GetDefaultOutputDevice, libportaudio), PaDeviceIndex, ())
+end
+
+const PaTime = Cdouble
+
+const PaSampleFormat = Culong
 
 mutable struct PaDeviceInfo
-    struct_version::Cint
+    structVersion::Cint
     name::Ptr{Cchar}
-    host_api::PaHostApiIndex
-    max_input_channels::Cint
-    max_output_channels::Cint
-    default_low_input_latency::PaTime
-    default_low_output_latency::PaTime
-    default_high_input_latency::PaTime
-    default_high_output_latency::PaTime
-    default_sample_rate::Cdouble
+    hostApi::PaHostApiIndex
+    maxInputChannels::Cint
+    maxOutputChannels::Cint
+    defaultLowInputLatency::PaTime
+    defaultLowOutputLatency::PaTime
+    defaultHighInputLatency::PaTime
+    defaultHighOutputLatency::PaTime
+    defaultSampleRate::Cdouble
 end
 
-Pa_GetDeviceCount() =
-    lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_GetDeviceCount()::PaDeviceIndex
-    end
+function Pa_GetDeviceInfo(device)
+    ccall((:Pa_GetDeviceInfo, libportaudio), Ptr{PaDeviceInfo}, (PaDeviceIndex,), device)
+end
 
-Pa_GetDeviceInfo(index) = unsafe_load(
-    lock(PA_MUTEX) do
-        result = @ccall libportaudio.Pa_GetDeviceInfo(index::PaDeviceIndex)::Ptr{PaDeviceInfo}
-        if result == C_NULL
-            error("Device doesn't exist")
-        end
-        result
-    end,
-)
-
-Pa_GetDefaultInputDevice() =
-    lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_GetDefaultInputDevice()::PaDeviceIndex
-    end
-
-Pa_GetDefaultOutputDevice() =
-    lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_GetDefaultOutputDevice()::PaDeviceIndex
-    end
-
-# Stream Functions
-
-mutable struct Pa_StreamParameters
+struct PaStreamParameters
     device::PaDeviceIndex
-    channel_count::Cint
-    sample_format::PaSampleFormat
-    suggested_latency::PaTime
-    host_API_specific_stream_info::Ptr{Cvoid}
+    channelCount::Cint
+    sampleFormat::PaSampleFormat
+    suggestedLatency::PaTime
+    hostApiSpecificStreamInfo::Ptr{Cvoid}
 end
+
+function Pa_IsFormatSupported(inputParameters, outputParameters, sampleRate)
+    ccall((:Pa_IsFormatSupported, libportaudio), PaError, (Ptr{PaStreamParameters}, Ptr{PaStreamParameters}, Cdouble), inputParameters, outputParameters, sampleRate)
+end
+
+const PaStream = Cvoid
+
+const PaStreamFlags = Culong
 
 mutable struct PaStreamCallbackTimeInfo
-    current_time::PaTime
-    input_buffer_analog_to_digital_time::PaTime
-    output_buffer_digital_to_analog_time::PaTime
+    inputBufferAdcTime::PaTime
+    currentTime::PaTime
+    outputBufferDacTime::PaTime
 end
 
+const PaStreamCallbackFlags = Culong
 
-# function Pa_OpenDefaultStream(input_channels, output_channels,
-#                               sample_format::PaSampleFormat,
-#                               the_sample_rate, frames_per_buffer)
-#     stream_pointer = Ref{PaStream}(0)
-#     handle_status(@ccall libportaudio.Pa_OpenDefaultStream(
-#         stream_pointer::Ref{PaStream},
-#         input_channels::Cint,
-#         output_channels::Cint,
-#         sample_format::PaSampleFormat,
-#         the_sample_rate::Cdouble,
-#         frames_per_buffer::Culong,
-#         C_NULL::Ref{Cvoid},
-#         C_NULL::Ref{Cvoid}
-#     )::PaError)
-#
-#     stream_pointer[]
-# end
-#
-function Pa_OpenStream(
-    input_parameters,
-    output_parameters,
-    the_sample_rate,
-    frames_per_buffer,
-    flags,
-    callback_pointer,
-    userdata_ref,
-)
-    stream_pointer = Ref{PaStream}(0)
-    handle_status(
-        lock(PA_MUTEX) do
-            @ccall libportaudio.Pa_OpenStream(
-                stream_pointer::Ref{PaStream},
-                input_parameters::Ref{Pa_StreamParameters},
-                output_parameters::Ref{Pa_StreamParameters},
-                float(the_sample_rate)::Cdouble,
-                frames_per_buffer::Culong,
-                flags::PaStreamFlags,
-                callback_pointer::Ptr{Cvoid},
-                userdata_ref::Ptr{Cvoid}
-            )::PaError
-        end,
-    )
-    stream_pointer[]
+@enum PaStreamCallbackResult::UInt32 begin
+    paContinue = 0
+    paComplete = 1
+    paAbort = 2
 end
 
-function Pa_StartStream(stream::PaStream)
-    handle_status(lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_StartStream(stream::PaStream)::PaError
-    end)
+# typedef int PaStreamCallback ( const void * input , void * output , unsigned long frameCount , const PaStreamCallbackTimeInfo * timeInfo , PaStreamCallbackFlags statusFlags , void * userData )
+const PaStreamCallback = Cvoid
+
+function Pa_OpenStream(stream, inputParameters, outputParameters, sampleRate, framesPerBuffer, streamFlags, streamCallback, userData)
+    ccall((:Pa_OpenStream, libportaudio), PaError, (Ptr{Ptr{PaStream}}, Ptr{PaStreamParameters}, Ptr{PaStreamParameters}, Cdouble, Culong, PaStreamFlags, Ptr{Cvoid}, Ptr{Cvoid}), stream, inputParameters, outputParameters, sampleRate, framesPerBuffer, streamFlags, streamCallback, userData)
 end
 
-function Pa_StopStream(stream::PaStream)
-    handle_status(lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_StopStream(stream::PaStream)::PaError
-    end)
+function Pa_OpenDefaultStream(stream, numInputChannels, numOutputChannels, sampleFormat, sampleRate, framesPerBuffer, streamCallback, userData)
+    ccall((:Pa_OpenDefaultStream, libportaudio), PaError, (Ptr{Ptr{PaStream}}, Cint, Cint, PaSampleFormat, Cdouble, Culong, Ptr{Cvoid}, Ptr{Cvoid}), stream, numInputChannels, numOutputChannels, sampleFormat, sampleRate, framesPerBuffer, streamCallback, userData)
 end
 
-function Pa_CloseStream(stream::PaStream)
-    handle_status(lock(PA_MUTEX) do
-        @ccall libportaudio.Pa_CloseStream(stream::PaStream)::PaError
-    end)
+function Pa_CloseStream(stream)
+    ccall((:Pa_CloseStream, libportaudio), PaError, (Ptr{PaStream},), stream)
 end
 
-function Pa_IsFormatSupported(input_parameters, output_parameters, the_sample_rate)
-    handle_status(lock(PA_MUTEX) do 
-        @ccall libportaudio.Pa_IsFormatSupported(
-            input_parameters::Ref{Pa_StreamParameters}, 
-            output_parameters::Ref{Pa_StreamParameters}, 
-            float(the_sample_rate)::Cdouble
-        )::PaError
-    end)
+# typedef void PaStreamFinishedCallback ( void * userData )
+const PaStreamFinishedCallback = Cvoid
+
+function Pa_SetStreamFinishedCallback(stream, streamFinishedCallback)
+    ccall((:Pa_SetStreamFinishedCallback, libportaudio), PaError, (Ptr{PaStream}, Ptr{Cvoid}), stream, streamFinishedCallback)
 end
 
-# mutable struct PaStreamInfo
-#     struct_version::Cint
-#     input_latency::PaTime
-#     output_latency::PaTime
-#     the_sample_rate::Cdouble
-# end
-# 
-# function Pa_GetStreamInfo(stream::PaStream)
-#     unsafe_load(
-#         result = @ccall libportaudio.Pa_GetStreamInfo(stream::PaStream)::Ptr{PaStreamInfo}
-#         if result == C_NULL
-#             error("Stream doesn't exist")
-#         end
-#         result
-#     )
-# end
-
-# General utility function to handle the status from the Pa_* functions
-function handle_status(error_id::Integer)
-    handle_status(ErrorCode(error_id))
+function Pa_StartStream(stream)
+    ccall((:Pa_StartStream, libportaudio), PaError, (Ptr{PaStream},), stream)
 end
 
-function handle_status(error_code)
-    if error_code != paNoError
-        throw(
-            ErrorException(
-                "libportaudio: " * unsafe_string(
-                    lock(PA_MUTEX) do
-                        @ccall libportaudio.Pa_GetErrorText(
-                            error_code::PaError,
-                        )::Ptr{Cchar}
-                    end,
-                ),
-            ),
-        )
+function Pa_StopStream(stream)
+    ccall((:Pa_StopStream, libportaudio), PaError, (Ptr{PaStream},), stream)
+end
+
+function Pa_AbortStream(stream)
+    ccall((:Pa_AbortStream, libportaudio), PaError, (Ptr{PaStream},), stream)
+end
+
+function Pa_IsStreamStopped(stream)
+    ccall((:Pa_IsStreamStopped, libportaudio), PaError, (Ptr{PaStream},), stream)
+end
+
+function Pa_IsStreamActive(stream)
+    ccall((:Pa_IsStreamActive, libportaudio), PaError, (Ptr{PaStream},), stream)
+end
+
+mutable struct PaStreamInfo
+    structVersion::Cint
+    inputLatency::PaTime
+    outputLatency::PaTime
+    sampleRate::Cdouble
+end
+
+function Pa_GetStreamInfo(stream)
+    ccall((:Pa_GetStreamInfo, libportaudio), Ptr{PaStreamInfo}, (Ptr{PaStream},), stream)
+end
+
+function Pa_GetStreamTime(stream)
+    ccall((:Pa_GetStreamTime, libportaudio), PaTime, (Ptr{PaStream},), stream)
+end
+
+function Pa_GetStreamCpuLoad(stream)
+    ccall((:Pa_GetStreamCpuLoad, libportaudio), Cdouble, (Ptr{PaStream},), stream)
+end
+
+function Pa_ReadStream(stream, buffer, frames)
+    ccall((:Pa_ReadStream, libportaudio), PaError, (Ptr{PaStream}, Ptr{Cvoid}, Culong), stream, buffer, frames)
+end
+
+function Pa_WriteStream(stream, buffer, frames)
+    ccall((:Pa_WriteStream, libportaudio), PaError, (Ptr{PaStream}, Ptr{Cvoid}, Culong), stream, buffer, frames)
+end
+
+function Pa_GetStreamReadAvailable(stream)
+    ccall((:Pa_GetStreamReadAvailable, libportaudio), Clong, (Ptr{PaStream},), stream)
+end
+
+function Pa_GetStreamWriteAvailable(stream)
+    ccall((:Pa_GetStreamWriteAvailable, libportaudio), Clong, (Ptr{PaStream},), stream)
+end
+
+function Pa_GetSampleSize(format)
+    ccall((:Pa_GetSampleSize, libportaudio), PaError, (PaSampleFormat,), format)
+end
+
+function Pa_Sleep(msec)
+    ccall((:Pa_Sleep, libportaudio), Cvoid, (Clong,), msec)
+end
+
+const paNoDevice = PaDeviceIndex(-1)
+
+const paUseHostApiSpecificDeviceSpecification = PaDeviceIndex(-2)
+
+const paFloat32 = PaSampleFormat(0x00000001)
+
+const paInt32 = PaSampleFormat(0x00000002)
+
+const paInt24 = PaSampleFormat(0x00000004)
+
+const paInt16 = PaSampleFormat(0x00000008)
+
+const paInt8 = PaSampleFormat(0x00000010)
+
+const paUInt8 = PaSampleFormat(0x00000020)
+
+const paCustomFormat = PaSampleFormat(0x00010000)
+
+const paNonInterleaved = PaSampleFormat(0x80000000)
+
+const paFormatIsSupported = 0
+
+const paFramesPerBufferUnspecified = 0
+
+const paNoFlag = PaStreamFlags(0)
+
+const paClipOff = PaStreamFlags(0x00000001)
+
+const paDitherOff = PaStreamFlags(0x00000002)
+
+const paNeverDropInput = PaStreamFlags(0x00000004)
+
+const paPrimeOutputBuffersUsingStreamCallback = PaStreamFlags(0x00000008)
+
+const paPlatformSpecificFlags = PaStreamFlags(0xffff0000)
+
+const paInputUnderflow = PaStreamCallbackFlags(0x00000001)
+
+const paInputOverflow = PaStreamCallbackFlags(0x00000002)
+
+const paOutputUnderflow = PaStreamCallbackFlags(0x00000004)
+
+const paOutputOverflow = PaStreamCallbackFlags(0x00000008)
+
+const paPrimingOutput = PaStreamCallbackFlags(0x00000010)
+
+# exports
+const PREFIXES = ["Pa", "pa"]
+for name in names(@__MODULE__; all=true), prefix in PREFIXES
+    if startswith(string(name), prefix)
+        @eval export $name
     end
-    nothing
 end
+
+end # module
