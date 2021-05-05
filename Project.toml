@@ -4,6 +4,9 @@ repo = "https://github.com/JuliaAudio/PortAudio.jl.git"
 version = "2.0.0"
 
 [deps]
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+SampledSignals = "bd7594eb-a658-542f-9e75-4c4d8908c167"
 alsa_plugins_jll = "5ac2f6bb-493e-5871-9171-112d4c21a6e7"
 BitFlags = "d1d4a3ce-64b1-5f1a-9ba4-7e7e69966f35"
 libportaudio_jll = "2d7b7beb-0762-5160-978e-1ab83a1e8a31"
@@ -16,6 +19,7 @@ libportaudio_jll = "19.6.0"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TestSetExtensions = "98d24dd4-01ad-11ea-1b02-c9a08f80db04"
 
 [targets]
-test = ["Test"]
+test = ["Test", "TestSetExtensions"]
